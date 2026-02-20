@@ -33,3 +33,7 @@ Thumbs.db
 *.csv
 *.ofx
 *.qif
+
+# UI
+ui/node_modules/
+ui/dist/
