@@ -3,3 +3,5 @@ pydantic-settings
 requests
 python-dotenv
 rapidfuzz
+fastapi
+uvicorn[standard]

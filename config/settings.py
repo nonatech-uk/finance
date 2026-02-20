@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     monzo_token_url: str = "https://api.monzo.com/oauth2/token"
     monzo_api_base: str = "https://api.monzo.com"
 
+    # API server
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
+    db_pool_min: int = 2
+    db_pool_max: int = 10
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @property
