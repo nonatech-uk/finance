@@ -1,6 +1,7 @@
 """Monzo API client: OAuth flow and transaction fetching."""
 
 import json
+import os
 import secrets
 import time
 import webbrowser
@@ -14,8 +15,13 @@ import requests
 
 from config.settings import settings
 
-TOKEN_FILE = Path("tokens.json")
+TOKEN_FILE = Path(os.environ.get("MONZO_TOKEN_FILE", "tokens.json"))
 SCA_WINDOW_SECONDS = 270  # 4.5 minutes — leave 30s safety margin
+
+
+class AuthRequiredError(Exception):
+    """Raised when Monzo authentication is needed but headless mode prevents interactive flow."""
+    pass
 
 
 class _OAuthCallbackHandler(BaseHTTPRequestHandler):
@@ -47,8 +53,13 @@ def _save_tokens(data: dict):
     TOKEN_FILE.write_text(json.dumps(data, indent=2))
 
 
-def authenticate() -> str:
-    """Run OAuth flow or refresh existing token. Returns access_token."""
+def authenticate(headless: bool = False) -> str:
+    """Run OAuth flow or refresh existing token. Returns access_token.
+
+    Args:
+        headless: If True, only attempt token refresh. Raises AuthRequiredError
+                  if a full interactive OAuth flow would be needed.
+    """
     tokens = _load_tokens()
 
     # Try refresh first
@@ -59,16 +70,23 @@ def authenticate() -> str:
             "client_id": settings.monzo_client_id,
             "client_secret": settings.monzo_client_secret,
             "refresh_token": tokens["refresh_token"],
-        })
+        }, timeout=30)
         if resp.ok:
             data = resp.json()
             data["authenticated_at"] = time.time()
             _save_tokens(data)
             print("Token refreshed.")
             return data["access_token"]
-        print(f"Refresh failed ({resp.status_code}), starting fresh OAuth flow.")
+        print(f"Refresh failed ({resp.status_code}).")
 
-    # Full OAuth flow
+    if headless:
+        raise AuthRequiredError(
+            "Monzo token refresh failed and interactive auth is not available. "
+            "Re-authenticate via the web UI."
+        )
+
+    # Full OAuth flow (interactive only)
+    print("Starting fresh OAuth flow.")
     state = secrets.token_urlsafe(16)
     auth_url = settings.monzo_auth_url + "?" + urlencode({
         "client_id": settings.monzo_client_id,
@@ -78,9 +96,10 @@ def authenticate() -> str:
     })
 
     parsed = urlparse(settings.monzo_redirect_uri)
+    host = parsed.hostname or "0.0.0.0"
     port = parsed.port or 9876
 
-    server = HTTPServer(("localhost", port), _OAuthCallbackHandler)
+    server = HTTPServer((host, port), _OAuthCallbackHandler)
 
     print(f"\nOpening Monzo auth in browser...\n  {auth_url}\n")
     webbrowser.open(auth_url)
@@ -100,7 +119,7 @@ def authenticate() -> str:
         "client_secret": settings.monzo_client_secret,
         "redirect_uri": settings.monzo_redirect_uri,
         "code": _OAuthCallbackHandler.code,
-    })
+    }, timeout=30)
     resp.raise_for_status()
     data = resp.json()
     data["authenticated_at"] = time.time()
@@ -113,6 +132,7 @@ def authenticate() -> str:
     whoami = requests.get(
         f"{settings.monzo_api_base}/ping/whoami",
         headers={"Authorization": f"Bearer {data['access_token']}"},
+        timeout=30,
     )
     whoami.raise_for_status()
     info = whoami.json()
@@ -132,7 +152,10 @@ def list_accounts(access_token: str, account_type: Optional[str] = None) -> List
         f"{settings.monzo_api_base}/accounts",
         headers={"Authorization": f"Bearer {access_token}"},
         params=params,
+        timeout=30,
     )
+    if resp.status_code == 401:
+        raise AuthRequiredError("Monzo access token expired (401). Re-authenticate.")
     resp.raise_for_status()
     return resp.json()["accounts"]
 
@@ -206,12 +229,14 @@ def fetch_transactions(
 def _api_get(url: str, headers: dict, params: dict, max_retries: int = 5) -> requests.Response:
     """GET with exponential backoff on 429."""
     for attempt in range(max_retries):
-        resp = requests.get(url, headers=headers, params=params)
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
         if resp.status_code == 429:
             wait = 2 ** attempt
             print(f"    Rate limited, waiting {wait}s...")
             time.sleep(wait)
             continue
+        if resp.status_code == 401:
+            raise AuthRequiredError("Monzo access token expired (401). Re-authenticate.")
         if resp.status_code == 400:
             # Might be a >1 year span issue, log and return empty
             print(f"    400 error: {resp.text[:200]}")

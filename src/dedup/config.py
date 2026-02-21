@@ -19,20 +19,28 @@ def get_priority(source: str) -> int:
     return SOURCE_PRIORITY.get(source, 99)
 
 
-# Cross-source pairs to check for each institution/account.
-# Order matters for Wise: api↔csv first, then ibank against grouped records.
-CROSS_SOURCE_PAIRS = [
-    # First Direct
+# Source supersession: for these accounts, the superseded source is
+# completely discarded — every transaction from it is marked non-preferred.
+# Use when the preferred source is authoritative (e.g. bank CSV with
+# running balances) and the superseded source is unreliable.
+SOURCE_SUPERSEDED = [
     {
         "institution": "first_direct",
         "account_ref": "fd_5682",
-        "pairs": [("first_direct_csv", "ibank")],
+        "superseded_source": "ibank",
     },
     {
         "institution": "first_direct",
         "account_ref": "fd_8897",
-        "pairs": [("first_direct_csv", "ibank")],
+        "superseded_source": "ibank",
     },
+]
+
+
+# Cross-source pairs to check for each institution/account.
+# Order matters for Wise: api↔csv first, then ibank against grouped records.
+CROSS_SOURCE_PAIRS = [
+    # First Direct — both accounts handled by SOURCE_SUPERSEDED
     # Monzo (iBank uses monzo_current alias)
     {
         "institution": "monzo",

@@ -23,12 +23,20 @@ MAX_STATEMENT_DAYS = 460  # API limit is 469, leave margin
 
 
 def _headers() -> dict:
-    return {"Authorization": f"Bearer {settings.wise_api_token}"}
+    token = settings.wise_api_token
+    if not token:
+        raise RuntimeError("Wise API token not configured (WISE_API_TOKEN / .env)")
+    return {"Authorization": f"Bearer {token}"}
 
 
 def get_profiles() -> List[dict]:
     """Fetch Wise profiles (personal + business)."""
-    resp = requests.get(f"{settings.wise_api_base}/v2/profiles", headers=_headers())
+    resp = requests.get(f"{settings.wise_api_base}/v2/profiles", headers=_headers(), timeout=30)
+    if resp.status_code == 401:
+        raise RuntimeError(
+            "Wise API token invalid or expired (401). "
+            "Regenerate at https://wise.com/settings/api-tokens"
+        )
     resp.raise_for_status()
     return resp.json()
 
@@ -39,7 +47,13 @@ def get_balances(profile_id: int) -> List[dict]:
         f"{settings.wise_api_base}/v4/profiles/{profile_id}/balances",
         headers=_headers(),
         params={"types": "STANDARD"},
+        timeout=30,
     )
+    if resp.status_code == 401:
+        raise RuntimeError(
+            "Wise API token invalid or expired (401). "
+            "Regenerate at https://wise.com/settings/api-tokens"
+        )
     resp.raise_for_status()
     return resp.json()
 
@@ -278,12 +292,17 @@ def fetch_statements(
 def _api_get(url: str, params: dict, max_retries: int = 5) -> requests.Response:
     """GET with exponential backoff on 429."""
     for attempt in range(max_retries):
-        resp = requests.get(url, headers=_headers(), params=params)
+        resp = requests.get(url, headers=_headers(), params=params, timeout=30)
         if resp.status_code == 429:
             wait = 2 ** attempt
             print(f"    Rate limited, waiting {wait}s...")
             time.sleep(wait)
             continue
+        if resp.status_code == 401:
+            raise RuntimeError(
+                "Wise API token invalid or expired (401). "
+                "Regenerate at https://wise.com/settings/api-tokens"
+            )
         if resp.status_code == 403:
             print(f"    403 Forbidden (SCA required?): {resp.text[:200]}")
             return _empty_response()

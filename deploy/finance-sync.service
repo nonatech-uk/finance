@@ -1,0 +1,11 @@
+[Unit]
+Description=Finance daily sync (Monzo + Wise)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/podman exec finance-sync python scripts/daily_sync.py
+TimeoutStartSec=600
+StandardOutput=journal
+StandardError=journal

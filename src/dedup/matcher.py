@@ -3,17 +3,105 @@
 Identifies duplicate raw_transactions across sources and creates
 dedup_group records. Idempotent — skips already-grouped records.
 
-Two rules:
-1. cross_source_date_amount — matches same transaction from different sources
+Three rules:
+1. source_superseded — blanket suppression of an unreliable source for
+   an account where another source is authoritative.
+2. cross_source_date_amount — matches same transaction from different sources
    by (institution, account_ref, posted_at, amount, currency).
-2. ibank_internal — matches iBank's own internal duplicates
+3. ibank_internal — matches iBank's own internal duplicates
    (same source, same date+amount+merchant).
 """
 
 from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 
-from src.dedup.config import CROSS_SOURCE_PAIRS, get_priority
+from src.dedup.config import CROSS_SOURCE_PAIRS, SOURCE_SUPERSEDED, get_priority
+
+
+def find_superseded_transactions(
+    conn,
+    institution: str,
+    account_ref: str,
+    superseded_source: str,
+) -> List[UUID]:
+    """Find all transactions from a superseded source that aren't already suppressed.
+
+    Returns list of raw_transaction IDs to be marked non-preferred.
+    """
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT rt.id
+        FROM raw_transaction rt
+        WHERE rt.institution = %(inst)s
+          AND rt.account_ref = %(acct)s
+          AND rt.source = %(src)s
+          AND NOT EXISTS (
+              SELECT 1 FROM dedup_group_member dgm
+              WHERE dgm.raw_transaction_id = rt.id
+                AND NOT dgm.is_preferred
+          )
+        ORDER BY rt.posted_at, rt.id
+    """, {
+        "inst": institution,
+        "acct": account_ref,
+        "src": superseded_source,
+    })
+    return [row[0] for row in cur.fetchall()]
+
+
+def suppress_superseded(
+    conn,
+    institution: str,
+    account_ref: str,
+    superseded_source: str,
+    dry_run: bool = False,
+) -> int:
+    """Mark all transactions from a superseded source as non-preferred.
+
+    Uses a single SQL statement to create dedup groups and members
+    in bulk.  Each superseded txn gets its own single-member group
+    with is_preferred=false, which the active_transaction view excludes.
+
+    Returns count of transactions suppressed.
+    """
+    ids = find_superseded_transactions(conn, institution, account_ref, superseded_source)
+    if not ids or dry_run:
+        return len(ids)
+
+    cur = conn.cursor()
+
+    # Flip any existing preferred memberships to non-preferred
+    cur.execute("""
+        UPDATE dedup_group_member SET is_preferred = false
+        WHERE raw_transaction_id = ANY(%s::uuid[])
+          AND is_preferred = true
+    """, ([str(i) for i in ids],))
+
+    # Filter out IDs that are already in a group
+    cur.execute("""
+        SELECT raw_transaction_id FROM dedup_group_member
+        WHERE raw_transaction_id = ANY(%s::uuid[])
+    """, ([str(i) for i in ids],))
+    already_grouped = {row[0] for row in cur.fetchall()}
+    new_ids = [i for i in ids if i not in already_grouped]
+
+    # Use a CTE to create groups and members in one statement
+    if new_ids:
+        cur.execute("""
+            WITH new_groups AS (
+                INSERT INTO dedup_group (canonical_id, match_rule, confidence)
+                SELECT id, 'source_superseded', 1.0
+                FROM raw_transaction
+                WHERE id = ANY(%(ids)s::uuid[])
+                RETURNING id AS group_id, canonical_id AS txn_id
+            )
+            INSERT INTO dedup_group_member (dedup_group_id, raw_transaction_id, is_preferred)
+            SELECT group_id, txn_id, false
+            FROM new_groups
+        """, {"ids": [str(i) for i in new_ids]})
+
+    conn.commit()
+    return len(ids)
 
 
 def resolve_account_ref(
@@ -278,6 +366,7 @@ def find_duplicates(
 ) -> Dict[str, int]:
     """Run all matching rules. Main entry point."""
     stats = {
+        "source_superseded": 0,
         "cross_source_groups": 0,
         "cross_source_extended": 0,
         "ibank_internal_groups": 0,
@@ -285,6 +374,27 @@ def find_duplicates(
     }
 
     cur = conn.cursor()
+
+    # Rule 0: Source supersession (run FIRST — blanket suppression
+    # before any pair matching)
+    print("  Source supersession:")
+    for config in SOURCE_SUPERSEDED:
+        inst = config["institution"]
+        acct = config["account_ref"]
+        src = config["superseded_source"]
+
+        if institution and inst != institution:
+            continue
+
+        count = suppress_superseded(conn, inst, acct, src, dry_run=dry_run)
+        if count:
+            print(f"    {inst}/{acct}: suppressed {count} {src} transactions")
+            stats["source_superseded"] += count
+
+    if not stats["source_superseded"]:
+        print("    (none)")
+
+    print()
 
     # Rule 1: iBank internal duplicates (run FIRST so cross-source
     # matching sees consolidated iBank records, not dupes)
