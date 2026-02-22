@@ -10,6 +10,7 @@ SOURCE_PRIORITY = {
     "wise_api": 1,
     "first_direct_csv": 2,
     "wise_csv": 2,
+    "marcus_csv": 2,
     "ibank": 3,
 }
 
@@ -44,38 +45,81 @@ SOURCE_SUPERSEDED = [
         "account_ref": "monzo_mees_pot",
         "superseded_source": "ibank",
     },
-]
-
-
-# Cross-source pairs to check for each institution/account.
-# Order matters for Wise: api↔csv first, then ibank against grouped records.
-CROSS_SOURCE_PAIRS = [
-    # First Direct — both accounts handled by SOURCE_SUPERSEDED
-    # Monzo — all iBank handled by SOURCE_SUPERSEDED
-    # Wise — pairwise processing: api↔csv first, then ibank
+    {
+        "institution": "goldman_sachs",
+        "account_ref": "marcus",
+        "superseded_source": "ibank",
+    },
+    # Wise — CSV is authoritative; supersede both iBank and API
+    # (iBank categories copied to matching CSV raw_data before supersession)
     {
         "institution": "wise",
         "account_ref": "wise_CHF",
-        "pairs": [("wise_api", "wise_csv"), ("wise_api", "ibank"), ("wise_csv", "ibank")],
+        "superseded_source": "ibank",
+    },
+    {
+        "institution": "wise",
+        "account_ref": "wise_CHF",
+        "superseded_source": "wise_api",
     },
     {
         "institution": "wise",
         "account_ref": "wise_EUR",
-        "pairs": [("wise_api", "wise_csv"), ("wise_api", "ibank"), ("wise_csv", "ibank")],
+        "superseded_source": "ibank",
+    },
+    {
+        "institution": "wise",
+        "account_ref": "wise_EUR",
+        "superseded_source": "wise_api",
     },
     {
         "institution": "wise",
         "account_ref": "wise_GBP",
-        "pairs": [("wise_api", "wise_csv"), ("wise_api", "ibank"), ("wise_csv", "ibank")],
+        "superseded_source": "ibank",
     },
     {
         "institution": "wise",
-        "account_ref": "wise_USD",
-        "pairs": [("wise_api", "wise_csv"), ("wise_api", "ibank"), ("wise_csv", "ibank")],
+        "account_ref": "wise_GBP",
+        "superseded_source": "wise_api",
     },
     {
         "institution": "wise",
         "account_ref": "wise_PLN",
-        "pairs": [("wise_api", "wise_csv"), ("wise_api", "ibank"), ("wise_csv", "ibank")],
+        "superseded_source": "ibank",
     },
+    {
+        "institution": "wise",
+        "account_ref": "wise_PLN",
+        "superseded_source": "wise_api",
+    },
+    {
+        "institution": "wise",
+        "account_ref": "wise_USD",
+        "superseded_source": "ibank",
+    },
+    {
+        "institution": "wise",
+        "account_ref": "wise_USD",
+        "superseded_source": "wise_api",
+    },
+    {
+        "institution": "wise",
+        "account_ref": "wise_NOK",
+        "superseded_source": "wise_api",
+    },
+    {
+        "institution": "wise",
+        "account_ref": "wise_SEK",
+        "superseded_source": "wise_api",
+    },
+]
+
+
+# Cross-source pairs to check for each institution/account.
+# All Wise sources handled by SOURCE_SUPERSEDED (CSV is sole authority).
+CROSS_SOURCE_PAIRS = [
+    # First Direct — handled by SOURCE_SUPERSEDED
+    # Monzo — handled by SOURCE_SUPERSEDED
+    # Wise — handled by SOURCE_SUPERSEDED (CSV only)
+    # Marcus — handled by SOURCE_SUPERSEDED
 ]

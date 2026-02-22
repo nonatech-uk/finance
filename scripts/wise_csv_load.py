@@ -45,18 +45,21 @@ def determine_account_currency(row: dict) -> str:
     return row["Source currency"]
 
 
-def build_raw_transaction(row: dict) -> Optional[dict]:
-    """Convert a CSV row into a raw_transaction-shaped dict.
+def build_raw_transactions(row: dict) -> List[dict]:
+    """Convert a CSV row into one or two raw_transaction-shaped dicts.
 
-    Returns None for rows we should skip (e.g. duplicates within the same
-    file where the same txn ID appears for both sides of a cross-currency card payment).
+    For same-currency transactions: returns one record.
+    For cross-currency transactions: returns two records — a debit on the
+    source currency balance and a credit on the target currency balance.
+
+    Returns empty list for rows we should skip.
     """
     txn_id = row["ID"]
     status = row["Status"]
     direction = row["Direction"]
 
     if status != "COMPLETED":
-        return None
+        return []
 
     source_currency = row["Source currency"]
     target_currency = row["Target currency"]
@@ -95,7 +98,10 @@ def build_raw_transaction(row: dict) -> Optional[dict]:
     raw_data = dict(row)
     raw_data["_csv_source"] = True
 
-    return {
+    results = []
+
+    # Source-side record (always created)
+    results.append({
         "transaction_ref": txn_id,
         "account_ref": f"wise_{source_currency}",
         "currency": source_currency,
@@ -114,7 +120,38 @@ def build_raw_transaction(row: dict) -> Optional[dict]:
         "direction": direction,
         "category": row.get("Category", ""),
         "note": row.get("Note", ""),
-    }
+    })
+
+    # Target-side credit record for balance conversions only.
+    # NEUTRAL = explicit balance conversion (GBP→CHF in your account)
+    # Cross-currency OUT = spending from one balance at a merchant in another
+    #   currency — the target currency doesn't enter your balance.
+    if is_fx and direction == "NEUTRAL":
+        target_raw_data = dict(raw_data)
+        target_raw_data["_fx_target_leg"] = True
+
+        results.append({
+            "transaction_ref": f"{txn_id}_target",
+            "account_ref": f"wise_{target_currency}",
+            "currency": target_currency,
+            "amount": target_amount,
+            "fee_amount": Decimal("0"),
+            "posted_at": posted_at,
+            "raw_merchant": f"Balance conversion from {source_currency}",
+            "raw_memo": row.get("Reference") or None,
+            "raw_data": target_raw_data,
+            "is_fx": is_fx,
+            "source_currency": source_currency,
+            "target_currency": target_currency,
+            "source_amount": source_amount,
+            "target_amount": target_amount,
+            "rate": rate,
+            "direction": direction,
+            "category": row.get("Category", ""),
+            "note": row.get("Note", ""),
+        })
+
+    return results
 
 
 def load_csv_files(filepaths: List[str]) -> List[dict]:
@@ -132,15 +169,13 @@ def load_csv_files(filepaths: List[str]) -> List[dict]:
         print(f"  {Path(fp).name}: {len(rows)} rows")
 
         for row in rows:
-            parsed = build_raw_transaction(row)
-            if parsed is None:
-                continue
-
-            key = (parsed["transaction_ref"], parsed["currency"])
-            if key in seen:
-                continue
-            seen.add(key)
-            all_txns.append(parsed)
+            parsed_list = build_raw_transactions(row)
+            for parsed in parsed_list:
+                key = (parsed["transaction_ref"], parsed["currency"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                all_txns.append(parsed)
 
     return all_txns
 
