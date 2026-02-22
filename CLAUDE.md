@@ -35,73 +35,37 @@ Personal finance system replacing Bankivity (iBank). Event-sourced: `raw_transac
 
 ## Current State (as of Feb 2026)
 
-### Git History (3 commits on main, pushed)
-1. `1d9adcf` - Initial commit: data pipeline + loaders (29 files, 4,244 lines)
-2. `32a0938` - FastAPI REST API (12 files, 975 lines)
-3. `71e42b3` - React UI (40 files, 6,060 lines)
+### Git History (main)
+1. `1d9adcf` - Initial commit: data pipeline + loaders
+2. `32a0938` - FastAPI REST API
+3. `71e42b3` - React UI
+4. `f76e72d` - CLAUDE.md project state handoff
+5. `63a7471` - Podman daily sync container + FD dedup fix
+6. `684e71c` - Update deploy script for NAS paths and healthchecks
+
+### What Was Fixed
+- **fd_5682 balance**: Was £68,634, now £3,224.61 (correct). All iBank transactions suppressed via `source_superseded` rule. CSV gap (Mar 2024 - Jan 2025) filled from additional CSV exports.
+- **fd_8897 balance**: Now -£3,562.41 (correct). Same approach — all iBank suppressed.
+- **Opening balance transactions**: Synthetic opening balance records inserted for both accounts to anchor the running total.
+- **Monzo current balance**: Was inflated due to (a) iBank data pollution, (b) 213 declined API transactions. Fixed by: suppressing all Monzo iBank via SOURCE_SUPERSEDED, adding `suppress_declined()` Rule 0b to suppress transactions with `decline_reason` set. Final balance: £326.30 ✓
+- **Monzo business account**: `acc_0000AvlkSBLkRzlxFfskfT`, 127 transactions, balance £6,943.38 ✓ (no iBank data, no dedup needed)
+- **Dedup system**: Added `source_superseded` as Rule 0, `declined` as Rule 0b. Runs before all other dedup rules.
 
 ### Database Counts
-- `raw_transaction`: 25,519 rows
-- `active_transaction` (view): 23,002 rows (2,517 removed by dedup)
-- `dedup_group`: 2,420 groups (4,937 members)
-- `cleaned_transaction`: 25,519 rows
+- `raw_transaction`: ~26,800 rows (includes gap-filling CSVs + opening balances)
+- `active_transaction` (view): ~14,600 rows
+- `dedup_group`: ~14,600 groups
 - `canonical_merchant`: 3,891
-- `merchant_raw_mapping`: 4,852
 - `category`: 136
-- `amazon_order_item`: 1,996
 
 ### Data Sources Loaded
 | Source | Count | Notes |
 |--------|-------|-------|
-| ibank | 17,550 | Bankivity migration, `is_dirty=true`, covers 2014-2026 |
-| monzo_api | 3,798 | Direct API, full history |
-| first_direct_csv | 3,315 | Bank CSV export, covers 2020-02 to 2026-02 **with gap** |
+| ibank | 17,550 | Bankivity migration, `is_dirty=true`, covers 2014-2026. **Suppressed** for FD + Monzo accounts |
+| monzo_api | 3,798 | Direct API, full history. 213 declined txns suppressed |
+| first_direct_csv | ~4,500 | Bank CSV export, covers 2020-02 to 2026-02 (gap filled) |
 | wise_api | 610 | Direct API |
 | wise_csv | 246 | CSV supplement |
-
-### Institutions (19)
-aegon, cash, citi, computershare, fidelity, first_direct, goldman_sachs, hl, monzo, ns_and_i, octopus, other, property, puma_vct, scottish_widows, standard_life, swiss_bank, vehicle, wise
-
----
-
-## ACTIVE BUG: Account 5682 Balance Incorrect (Dedup Gap)
-
-**Problem**: The `fd_5682` (First Direct current account) shows balance of £68,634 in the UI. The CSV alone sums to £9,959. The inflated balance comes from un-deduped iBank transactions appearing alongside CSV transactions.
-
-**Root Cause**: The First Direct CSV has a **12-month gap** (March 2024 to January 2025). During the overlap period where both CSV and iBank data exist, 7,234 iBank transactions were not matched by the dedup pipeline. Breakdown:
-
-- **2014-2019**: iBank only (no CSV) — these are correct, no dedup needed
-- **2020-02 to 2024-02**: CSV + iBank overlap — dedup matched ~1,582 pairs correctly
-- **2024-03 to 2025-01**: CSV gap — iBank only, correct to include
-- **2025-02 to 2026-02**: CSV + iBank overlap — dedup matched remaining pairs
-
-The cross-source dedup matcher (`src/dedup/matcher.py`) uses `find_cross_source_duplicates()` which matches on `(posted_at, amount, currency)` with ROW_NUMBER positional matching. The filter on line 77-81 excludes records that are already non-preferred members of another group — **but it also excludes records that are already preferred members**. This means if an iBank txn was already marked as preferred in an iBank_internal dedup group, it won't be picked up by the cross-source matcher.
-
-**Investigation so far** (done in this session):
-- Confirmed the CSV covers 2020-02 to 2026-02 with the Mar2024-Jan2025 gap
-- On dates where both sources exist (e.g., 2025-11-10), dedup works perfectly — all 15 pairs matched
-- 7,234 iBank txns are unmatched and in the active view, inflating the balance by ~£58,675
-- The unmatched iBank txns span all years 2014-2026 (not just the gap period)
-- Years 2014-2019 unmatched iBank is EXPECTED (no CSV existed)
-- Years 2020-2023 + 2025-2026 have varying overlap — need deeper investigation
-
-**Next step**: Investigate why matched txns in the overlap period aren't all being deduped. Likely causes:
-1. The `NOT EXISTS` filter in `find_cross_source_duplicates` may be too aggressive (excludes already-grouped preferred records)
-2. The iBank internal dedup runs FIRST, grouping some iBank records, which then get skipped by cross-source matching
-3. There may be genuinely different transactions in iBank not in CSV (account covers card transactions, standing orders etc. that CSV might miss)
-
-**To reproduce**:
-```python
-# Run in project root with venv activated
-import psycopg2
-from config.settings import Settings
-s = Settings()
-conn = psycopg2.connect(host=s.db_host, port=s.db_port, dbname=s.db_name, user=s.db_user, password=s.db_password)
-cur = conn.cursor()
-cur.execute("SELECT source, COUNT(*), SUM(amount) FROM active_transaction WHERE account_ref = 'fd_5682' GROUP BY source")
-print(cur.fetchall())
-# Expected: CSV ~£9,959, iBank ~£58,675 (should be much less after proper dedup)
-```
 
 ---
 
@@ -124,18 +88,11 @@ Bank APIs / CSVs / iBank export
   React UI                  → ui/
 ```
 
-### Key JOIN Chain (for displaying categorised transactions)
-```sql
-active_transaction
-  → cleaned_transaction (ON id)
-  → merchant_raw_mapping (ON cleaned_merchant)
-  → canonical_merchant (ON canonical_merchant_id)
-  → category (ON category_hint)
-```
-
-### Dedup Logic
-- **Rule 1** `ibank_internal`: Same source, same (date, amount, currency, merchant) — runs first
-- **Rule 2** `cross_source_date_amount`: Different sources, same (institution, account_ref, date, amount, currency) — uses ROW_NUMBER positional matching for same-day same-amount pairs
+### Dedup Logic (4 rules, run in order)
+- **Rule 0** `source_superseded`: Blanket suppression of unreliable source for an account (e.g. iBank suppressed for FD + Monzo accounts)
+- **Rule 0b** `declined`: Suppress Monzo API transactions with `decline_reason` set (never settled, excluded from CSV/balance)
+- **Rule 1** `ibank_internal`: Same source, same (date, amount, currency, merchant)
+- **Rule 2** `cross_source_date_amount`: Different sources, same (institution, account_ref, date, amount, currency) — uses ROW_NUMBER positional matching
 - Source priority: monzo_api/wise_api (1) > first_direct_csv/wise_csv (2) > ibank (3)
 - Config in `src/dedup/config.py`, matcher in `src/dedup/matcher.py`
 
@@ -147,7 +104,40 @@ WHERE NOT EXISTS (
   WHERE dgm.raw_transaction_id = rt.id AND NOT dgm.is_preferred
 );
 ```
-Includes: all non-grouped txns + preferred members of each group. Excludes: non-preferred (duplicate) members.
+
+---
+
+## Daily Sync Container (Podman)
+
+Container running on `192.168.128.9`. Syncs Monzo + Wise transactions daily at 3am.
+
+### Components
+- **`src/ingestion/monzo_auth.py`** — Persistent HTTP server on `0.0.0.0:9876`. Serves status page, handles OAuth callback, provides JSON polling for app approval. Main container process.
+- **`scripts/daily_sync.py`** — Orchestrator: Wise sync (30 days) → Monzo sync (headless refresh, 30 days) → cleaning → dedup → healthcheck pings.
+- **`Containerfile`** — Python 3.12-slim, exposes 9876.
+- **`deploy/run.sh`** — Build + run with secrets from `/opt/finance/secrets/`.
+- **`deploy/finance-sync.timer`** — Systemd timer, 3am daily.
+
+### Key Design Decisions
+- Monzo auth uses `headless=True` for daily sync — only attempts token refresh. Raises `AuthRequiredError` if interactive flow needed.
+- Re-auth available at `https://finance.mees.st/` from any LAN device.
+- `MONZO_TOKEN_FILE` env var controls token file location (default: `tokens.json`).
+- `MONZO_REDIRECT_URI` env var overrides redirect URI for container (set to `https://finance.mees.st/oauth/callback`).
+- Per-source healthcheck URLs via `HEALTHCHECK_MONZO_URL` and `HEALTHCHECK_WISE_URL` env vars.
+- Wise `_api_get()` and `_headers()` now have timeout=30, 401 handling, and empty token guard.
+- Monzo `_api_get()` and `list_accounts()` now have timeout=30 and 401 → `AuthRequiredError`.
+
+### Deployment
+```bash
+# On 192.168.128.9
+mkdir -p /opt/finance/secrets
+# Place .env and tokens.json in /opt/finance/secrets/
+# Set up reverse proxy: finance.mees.st → localhost:9876
+./deploy/run.sh
+# Install timer
+cp deploy/finance-sync.{service,timer} /etc/systemd/system/
+systemctl enable --now finance-sync.timer
+```
 
 ---
 
@@ -169,36 +159,17 @@ All under `/api/v1/`:
 | GET | /stats/overview | Dashboard summary stats |
 | GET | /health | Pool status |
 
-### API Notes
-- Sync psycopg2 with `ThreadedConnectionPool` (not async)
-- Pool managed via FastAPI lifespan context manager
-- CORS allows all origins (personal tool)
-- `src/api/app.py` adds project root to sys.path — must run from project root
-
 ---
 
 ## UI (React on :5173)
 
-### Pages (all verified working with live data)
+### Pages
 - **Dashboard**: 4 stat cards, 12-month income/expense BarChart, top spending categories
-- **Transactions**: Debounced search, institution/currency/date filters, paginated table, click-to-open detail slide-over (merchant chain, dedup group, raw JSON)
+- **Transactions**: Debounced search, institution/currency/date filters, paginated table, click-to-open detail slide-over
 - **Accounts**: Grouped by institution, balance cards, links to AccountDetail
 - **AccountDetail**: Stats + recent transactions for one account
-- **Categories**: Left=recursive tree with expand/collapse, Right=date range + spending chart + table
-- **Merchants**: Search, "Unmapped only" checkbox, category assignment via `<select>`
-
-### UI Stack
-- Vite + React 19 + TypeScript
-- Tailwind CSS v4 (CSS-first config, `@theme` block in index.css)
-- TanStack Query (useInfiniteQuery for cursor pagination, useMutation for merchant mapping)
-- Recharts for charts
-- Dark theme with custom CSS vars (bg-primary: #0a0a0f etc.)
-- Proxy: `/api` → `http://localhost:8000`
-
-### Build
-```bash
-cd ui && npm run build  # 643kb JS bundle, zero TS errors
-```
+- **Categories**: Left=recursive tree, Right=date range + spending chart + table
+- **Merchants**: Search, "Unmapped only" checkbox, category assignment
 
 ---
 
@@ -219,11 +190,13 @@ finance/
 │   ├── load_ibank_categories.py    # iBank category import
 │   ├── amazon_load.py          # Amazon order history
 │   ├── run_cleaning.py         # Merchant cleaning pipeline
-│   └── run_dedup.py            # Deduplication pipeline
+│   ├── run_dedup.py            # Deduplication pipeline
+│   └── daily_sync.py           # Daily Wise+Monzo sync orchestrator
 ├── src/
 │   ├── ingestion/
 │   │   ├── writer.py           # Idempotent raw layer writer
-│   │   ├── monzo.py            # Monzo OAuth + API client
+│   │   ├── monzo.py            # Monzo OAuth + API client (headless mode)
+│   │   ├── monzo_auth.py       # Persistent LAN auth server for container
 │   │   ├── wise.py             # Wise API client
 │   │   └── wise_fx.py          # Wise FX rate enrichment
 │   ├── cleaning/
@@ -231,7 +204,7 @@ finance/
 │   │   ├── rules.py            # Rule engine
 │   │   └── matcher.py          # Fuzzy merchant matching
 │   ├── dedup/
-│   │   ├── config.py           # Source priorities + cross-source pairs
+│   │   ├── config.py           # Source priorities + supersession + cross-source pairs
 │   │   └── matcher.py          # Dedup matching + group creation
 │   └── api/
 │       ├── app.py              # FastAPI app + lifespan + CORS
@@ -251,6 +224,11 @@ finance/
 │       ├── components/         # common/ (5) + layout/ (2)
 │       └── pages/              # Dashboard, Transactions, Accounts,
 │                               # AccountDetail, Categories, Merchants
+├── deploy/
+│   ├── run.sh                  # Podman build + run
+│   ├── finance-sync.service    # Systemd oneshot unit
+│   └── finance-sync.timer      # 3am daily trigger
+├── Containerfile               # Podman/Docker build
 ├── .wise                       # Wise API token (gitignored)
 ├── DECISIONS.md                # Architecture & design decisions
 ├── SCHEMA.md                   # Full database schema
@@ -264,6 +242,7 @@ finance/
 
 - **DB**: See `config/.env` (gitignored)
 - **Wise API token**: `.wise` file (gitignored)
+- **Monzo OAuth tokens**: `tokens.json` (gitignored)
 - **Monzo client ID**: `oauth2client_0000B3VKN1klMnFavWSOCw` (in monzo.py)
 - **GitHub**: `git@github.com:nonatech-uk/finance.git`
 
@@ -271,18 +250,14 @@ finance/
 
 ## What To Do Next
 
-**Immediate**: Fix the dedup pipeline for `fd_5682` (see ACTIVE BUG section above). This is the highest priority data quality issue.
-
-**Then**: General data cleanup phase:
-1. Re-run dedup with improved matching (may need to `reset_groups()` and re-run)
-2. Check other accounts for similar balance discrepancies
-3. Review unmatched transactions to separate genuine uniques from missed duplicates
-4. Consider adding merchant-name fuzzy matching as a secondary dedup signal
+**Immediate**: General data quality:
+1. Review Wise and other accounts for balance discrepancies
+2. Consider adding merchant-name fuzzy matching as a secondary dedup signal
+3. Improve cleaning rules for First Direct CSV merchant strings
 
 **Future** (from DECISIONS.md):
 - Inter-account transfer matching (economic events)
 - LLM-assisted categorisation
-- Docker deployment to NAS
 - Monzo webhook endpoint via Cloudflare Tunnel
 - Recurring pattern detection
 - Alerting & forecasting

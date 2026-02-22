@@ -58,6 +58,7 @@ def main():
 
         print(f"\n=== Results ===")
         print(f"  Source superseded:            {result['source_superseded']}")
+        print(f"  Declined suppressed:          {result['declined']}")
         print(f"  Cross-source groups created:  {result['cross_source_groups']}")
         print(f"  Cross-source groups extended:  {result['cross_source_extended']}")
         print(f"  iBank internal groups:         {result['ibank_internal_groups']}")

@@ -104,6 +104,62 @@ def suppress_superseded(
     return len(ids)
 
 
+def suppress_declined(conn, dry_run: bool = False) -> int:
+    """Suppress Monzo declined transactions (amount in raw_data is 0 or decline_reason set).
+
+    These are API-recorded attempted charges that never settled.
+    Returns count of transactions suppressed.
+    """
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT rt.id
+        FROM raw_transaction rt
+        WHERE rt.source = 'monzo_api'
+          AND rt.raw_data->>'decline_reason' IS NOT NULL
+          AND rt.raw_data->>'decline_reason' != ''
+          AND NOT EXISTS (
+              SELECT 1 FROM dedup_group_member dgm
+              WHERE dgm.raw_transaction_id = rt.id
+                AND NOT dgm.is_preferred
+          )
+    """)
+    ids = [row[0] for row in cur.fetchall()]
+    if not ids or dry_run:
+        return len(ids)
+
+    # Flip any existing preferred memberships to non-preferred
+    cur.execute("""
+        UPDATE dedup_group_member SET is_preferred = false
+        WHERE raw_transaction_id = ANY(%s::uuid[])
+          AND is_preferred = true
+    """, ([str(i) for i in ids],))
+
+    # Filter out IDs that are already in a group (as non-preferred now)
+    cur.execute("""
+        SELECT raw_transaction_id FROM dedup_group_member
+        WHERE raw_transaction_id = ANY(%s::uuid[])
+    """, ([str(i) for i in ids],))
+    already_grouped = {row[0] for row in cur.fetchall()}
+    new_ids = [i for i in ids if i not in already_grouped]
+
+    if new_ids:
+        cur.execute("""
+            WITH new_groups AS (
+                INSERT INTO dedup_group (canonical_id, match_rule, confidence)
+                SELECT id, 'declined', 1.0
+                FROM raw_transaction
+                WHERE id = ANY(%(ids)s::uuid[])
+                RETURNING id AS group_id, canonical_id AS txn_id
+            )
+            INSERT INTO dedup_group_member (dedup_group_id, raw_transaction_id, is_preferred)
+            SELECT group_id, txn_id, false
+            FROM new_groups
+        """, {"ids": [str(i) for i in new_ids]})
+
+    conn.commit()
+    return len(ids)
+
+
 def resolve_account_ref(
     conn, institution: str, account_ref: str
 ) -> str:
@@ -367,6 +423,7 @@ def find_duplicates(
     """Run all matching rules. Main entry point."""
     stats = {
         "source_superseded": 0,
+        "declined": 0,
         "cross_source_groups": 0,
         "cross_source_extended": 0,
         "ibank_internal_groups": 0,
@@ -393,6 +450,12 @@ def find_duplicates(
 
     if not stats["source_superseded"]:
         print("    (none)")
+
+    # Rule 0b: Declined transactions
+    declined = suppress_declined(conn, dry_run=dry_run)
+    if declined:
+        print(f"  Declined transactions: suppressed {declined}")
+        stats["declined"] = declined
 
     print()
 

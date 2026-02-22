@@ -3,8 +3,8 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # Monzo
-    monzo_client_id: str
-    monzo_client_secret: str
+    monzo_client_id: str = ""
+    monzo_client_secret: str = ""
     monzo_redirect_uri: str = "http://localhost:9876/oauth/callback"
 
     # Postgres

@@ -34,6 +34,16 @@ SOURCE_SUPERSEDED = [
         "account_ref": "fd_8897",
         "superseded_source": "ibank",
     },
+    {
+        "institution": "monzo",
+        "account_ref": "monzo_current",
+        "superseded_source": "ibank",
+    },
+    {
+        "institution": "monzo",
+        "account_ref": "monzo_mees_pot",
+        "superseded_source": "ibank",
+    },
 ]
 
 
@@ -41,12 +51,7 @@ SOURCE_SUPERSEDED = [
 # Order matters for Wise: api↔csv first, then ibank against grouped records.
 CROSS_SOURCE_PAIRS = [
     # First Direct — both accounts handled by SOURCE_SUPERSEDED
-    # Monzo (iBank uses monzo_current alias)
-    {
-        "institution": "monzo",
-        "account_ref": "acc_00009cSZpPQxiG2CFWlPjF",
-        "pairs": [("monzo_api", "ibank")],
-    },
+    # Monzo — all iBank handled by SOURCE_SUPERSEDED
     # Wise — pairwise processing: api↔csv first, then ibank
     {
         "institution": "wise",
