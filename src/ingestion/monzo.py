@@ -196,6 +196,8 @@ def fetch_transactions(
                 window_start = cutoff
 
         window_end = min(window_start + timedelta(days=30), now)
+        if (window_end - window_start).total_seconds() < 60:
+            break
         cursor = window_start.strftime("%Y-%m-%dT%H:%M:%SZ")
         before = window_end.strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -238,15 +240,9 @@ def _api_get(url: str, headers: dict, params: dict, max_retries: int = 5) -> req
         if resp.status_code == 401:
             raise AuthRequiredError("Monzo access token expired (401). Re-authenticate.")
         if resp.status_code == 400:
-            # Might be a >1 year span issue, log and return empty
-            print(f"    400 error: {resp.text[:200]}")
-            return _empty_response()
+            raise RuntimeError(f"Monzo API 400 error: {resp.text[:200]}")
         resp.raise_for_status()
         return resp
     raise RuntimeError(f"Rate limited {max_retries} times, giving up.")
 
 
-class _empty_response:
-    """Stub for returning empty transaction list on 400 errors."""
-    def json(self):
-        return {"transactions": []}
