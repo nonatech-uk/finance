@@ -81,6 +81,7 @@ def spending_by_category(
         "rt.posted_at >= %(date_from)s",
         "rt.posted_at <= %(date_to)s",
         "rt.currency = %(currency)s",
+        "(acct.exclude_from_reports IS NOT TRUE)",
     ]
     params: dict = {
         "date_from": date_from,
@@ -105,6 +106,9 @@ def spending_by_category(
             SUM(rt.amount) AS total,
             COUNT(*) AS transaction_count
         FROM active_transaction rt
+        LEFT JOIN account acct
+            ON acct.institution = rt.institution
+            AND acct.account_ref = rt.account_ref
         LEFT JOIN cleaned_transaction ct ON ct.raw_transaction_id = rt.id
         LEFT JOIN merchant_raw_mapping mrm ON mrm.cleaned_merchant = ct.cleaned_merchant
         LEFT JOIN canonical_merchant cm ON cm.id = mrm.canonical_merchant_id

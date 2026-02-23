@@ -16,7 +16,9 @@ export default function AccountDetail() {
     <div className="space-y-6">
       <div className="flex items-center gap-3">
         <Link to="/accounts" className="text-text-secondary hover:text-text-primary">&larr;</Link>
-        <h2 className="text-xl font-semibold">{institution} / {accountRef}</h2>
+        <h2 className="text-xl font-semibold">
+          {data.summary.display_name || data.summary.account_name || `${institution} / ${accountRef}`}
+        </h2>
       </div>
 
       <div className="grid grid-cols-4 gap-4">

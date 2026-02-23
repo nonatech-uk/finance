@@ -1,27 +1,30 @@
 """Account endpoints."""
 
-from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.api.deps import get_conn
-from src.api.models import TransactionItem
+from src.api.models import AccountUpdate, TransactionItem
 
 router = APIRouter()
 
 
 @router.get("/accounts")
 def list_accounts(
+    include_archived: bool = Query(False, description="Include archived accounts"),
     conn=Depends(get_conn),
 ):
     """List all accounts derived from transaction data, with summaries.
 
     Returns distinct institution/account_ref/currency combos from active
-    transactions, enriched with account table metadata where available.
+    transactions, enriched with account table metadata.
     """
     cur = conn.cursor()
 
-    cur.execute("""
+    archive_filter = ""
+    if not include_archived:
+        archive_filter = "AND (a.is_archived IS NOT TRUE)"
+
+    cur.execute(f"""
         SELECT
             rt.institution,
             rt.account_ref,
@@ -30,34 +33,38 @@ def list_accounts(
             min(rt.posted_at) AS earliest_date,
             max(rt.posted_at) AS latest_date,
             sum(rt.amount) AS balance,
-            a.id AS account_id,
             a.name AS account_name,
+            a.display_name,
             a.account_type,
-            a.is_active
+            a.is_active,
+            a.is_archived,
+            a.exclude_from_reports
         FROM active_transaction rt
         LEFT JOIN account a
             ON a.institution = rt.institution
-            AND a.currency = rt.currency
-            AND a.name LIKE '%%' || rt.account_ref || '%%'
+            AND a.account_ref = rt.account_ref
+        WHERE 1=1 {archive_filter}
         GROUP BY rt.institution, rt.account_ref, rt.currency,
-                 a.id, a.name, a.account_type, a.is_active
+                 a.name, a.display_name, a.account_type, a.is_active,
+                 a.is_archived, a.exclude_from_reports
         ORDER BY rt.institution, rt.account_ref
     """)
 
     columns = [desc[0] for desc in cur.description]
     rows = cur.fetchall()
-    items = [dict(zip(columns, row)) for row in rows]
-
-    # Convert Decimal/date to JSON-friendly types
-    for item in items:
+    items = []
+    for row in rows:
+        item = dict(zip(columns, row))
+        # Rename account_name -> name for model
+        item["name"] = item.pop("account_name", None)
+        # Convert types for JSON
         if item["balance"] is not None:
             item["balance"] = str(item["balance"])
         if item["earliest_date"] is not None:
             item["earliest_date"] = str(item["earliest_date"])
         if item["latest_date"] is not None:
             item["latest_date"] = str(item["latest_date"])
-        if item["account_id"] is not None:
-            item["account_id"] = str(item["account_id"])
+        items.append(item)
 
     return {"items": items}
 
@@ -72,17 +79,27 @@ def get_account_detail(
     """Get account detail with summary and recent transactions."""
     cur = conn.cursor()
 
-    # Summary
+    # Summary with account metadata
     cur.execute("""
         SELECT
             count(*) AS transaction_count,
-            min(posted_at) AS earliest_date,
-            max(posted_at) AS latest_date,
-            sum(amount) AS balance,
-            currency
-        FROM active_transaction
-        WHERE institution = %s AND account_ref = %s
-        GROUP BY currency
+            min(rt.posted_at) AS earliest_date,
+            max(rt.posted_at) AS latest_date,
+            sum(rt.amount) AS balance,
+            rt.currency,
+            a.name AS account_name,
+            a.display_name,
+            a.account_type,
+            a.is_active,
+            a.is_archived,
+            a.exclude_from_reports
+        FROM active_transaction rt
+        LEFT JOIN account a
+            ON a.institution = rt.institution
+            AND a.account_ref = rt.account_ref
+        WHERE rt.institution = %s AND rt.account_ref = %s
+        GROUP BY rt.currency, a.name, a.display_name, a.account_type,
+                 a.is_active, a.is_archived, a.exclude_from_reports
     """, (institution, account_ref))
 
     summary_row = cur.fetchone()
@@ -125,3 +142,79 @@ def get_account_detail(
         "summary": summary,
         "recent_transactions": [t.model_dump(mode="json") for t in transactions],
     }
+
+
+@router.put("/accounts/{institution}/{account_ref}")
+def update_account(
+    institution: str,
+    account_ref: str,
+    body: AccountUpdate,
+    conn=Depends(get_conn),
+):
+    """Update account metadata (display_name, is_archived, exclude_from_reports).
+
+    Upserts: creates the account row if it doesn't exist.
+    """
+    cur = conn.cursor()
+
+    # Build SET clause from non-None fields
+    updates = {}
+    if body.display_name is not None:
+        updates["display_name"] = body.display_name
+    if body.is_archived is not None:
+        updates["is_archived"] = body.is_archived
+    if body.exclude_from_reports is not None:
+        updates["exclude_from_reports"] = body.exclude_from_reports
+
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+
+    # Check if row exists
+    cur.execute(
+        "SELECT id FROM account WHERE institution = %s AND account_ref = %s",
+        (institution, account_ref),
+    )
+    existing = cur.fetchone()
+
+    if existing:
+        set_clause = ", ".join(f"{k} = %({k})s" for k in updates)
+        updates["institution"] = institution
+        updates["account_ref"] = account_ref
+        cur.execute(
+            f"UPDATE account SET {set_clause} "
+            "WHERE institution = %(institution)s AND account_ref = %(account_ref)s",
+            updates,
+        )
+    else:
+        # Determine currency from transactions
+        cur.execute(
+            "SELECT currency FROM active_transaction "
+            "WHERE institution = %s AND account_ref = %s LIMIT 1",
+            (institution, account_ref),
+        )
+        ccy_row = cur.fetchone()
+        if not ccy_row:
+            raise HTTPException(404, "Account not found in transactions")
+
+        updates["institution"] = institution
+        updates["account_ref"] = account_ref
+        updates["name"] = account_ref
+        updates["currency"] = ccy_row[0]
+        updates["account_type"] = "current"
+
+        cols = ", ".join(updates.keys())
+        vals = ", ".join(f"%({k})s" for k in updates)
+        cur.execute(f"INSERT INTO account ({cols}) VALUES ({vals})", updates)
+
+    conn.commit()
+
+    # Return updated row
+    cur.execute("""
+        SELECT institution, account_ref, name, display_name, currency,
+               account_type, is_active, is_archived, exclude_from_reports
+        FROM account
+        WHERE institution = %s AND account_ref = %s
+    """, (institution, account_ref))
+    row = cur.fetchone()
+    cols = [d[0] for d in cur.description]
+    return dict(zip(cols, row))

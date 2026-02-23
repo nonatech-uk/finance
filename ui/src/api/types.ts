@@ -69,14 +69,22 @@ export interface AccountItem {
   earliest_date: string | null
   latest_date: string | null
   balance: string | null
-  account_id: string | null
-  account_name: string | null
+  name: string | null
+  display_name: string | null
   account_type: string | null
   is_active: boolean | null
+  is_archived: boolean
+  exclude_from_reports: boolean
 }
 
 export interface AccountList {
   items: AccountItem[]
+}
+
+export interface AccountUpdate {
+  display_name?: string | null
+  is_archived?: boolean
+  exclude_from_reports?: boolean
 }
 
 export interface AccountDetailResponse {
@@ -88,6 +96,12 @@ export interface AccountDetailResponse {
     latest_date: string
     balance: number
     currency: string
+    account_name: string | null
+    display_name: string | null
+    account_type: string | null
+    is_active: boolean | null
+    is_archived: boolean
+    exclude_from_reports: boolean
   }
   recent_transactions: TransactionItem[]
 }

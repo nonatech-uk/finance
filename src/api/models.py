@@ -79,12 +79,15 @@ class TransactionDetail(TransactionItem):
 
 
 class AccountItem(BaseModel):
-    id: UUID
     institution: str
-    name: str
+    account_ref: str
     currency: str
-    account_type: str
-    is_active: bool
+    name: str | None = None
+    display_name: str | None = None
+    account_type: str | None = None
+    is_active: bool = True
+    is_archived: bool = False
+    exclude_from_reports: bool = False
     transaction_count: int = 0
     earliest_date: date | None = None
     latest_date: date | None = None
@@ -93,6 +96,14 @@ class AccountItem(BaseModel):
 
 class AccountList(BaseModel):
     items: list[AccountItem]
+
+
+class AccountUpdate(BaseModel):
+    """Request body for updating account metadata."""
+
+    display_name: str | None = None
+    is_archived: bool | None = None
+    exclude_from_reports: bool | None = None
 
 
 # ── Merchants ─────────────────────────────────────────────────────────────────

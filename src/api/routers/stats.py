@@ -24,6 +24,7 @@ def monthly_totals(
     conditions = [
         "rt.currency = %(currency)s",
         "rt.posted_at >= (CURRENT_DATE - %(months)s * INTERVAL '1 month')",
+        "(a.is_archived IS NOT TRUE)",
     ]
     params: dict = {"currency": currency, "months": months}
 
@@ -44,6 +45,9 @@ def monthly_totals(
             SUM(rt.amount) AS net,
             COUNT(*) AS transaction_count
         FROM active_transaction rt
+        LEFT JOIN account a
+            ON a.institution = rt.institution
+            AND a.account_ref = rt.account_ref
         WHERE {where}
         GROUP BY TO_CHAR(rt.posted_at, 'YYYY-MM')
         ORDER BY month DESC
