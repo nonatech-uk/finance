@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
 
 
@@ -24,13 +26,19 @@ class Settings(BaseSettings):
     monzo_token_url: str = "https://api.monzo.com/oauth2/token"
     monzo_api_base: str = "https://api.monzo.com"
 
+    # Anthropic (for LLM categorisation)
+    anthropic_api_key: str = ""
+
     # API server
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     db_pool_min: int = 2
     db_pool_max: int = 10
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": str(Path(__file__).resolve().parent / ".env"),
+        "env_file_encoding": "utf-8",
+    }
 
     @property
     def dsn(self) -> str:
