@@ -8,6 +8,7 @@ import {
   useReviewSuggestion,
   useRunCategorisation,
   useMergeMerchant,
+  useBulkMergeMerchants,
   useDisplayRules,
   useCreateRule,
   useDeleteRule,
@@ -432,7 +433,11 @@ export default function Merchants() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [unmapped, setUnmapped] = useState(false)
   const [selectedMerchantId, setSelectedMerchantId] = useState<string | null>(null)
+  const [selectMode, setSelectMode] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [mergeName, setMergeName] = useState('')
   const runCategorisation = useRunCategorisation()
+  const bulkMerge = useBulkMergeMerchants()
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300)
@@ -456,17 +461,48 @@ export default function Merchants() {
     mappingMutation.mutate({ id: merchantId, categoryHint: value || null })
   }
 
+  const toggleSelect = (id: string) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selected.size === allItems.length) setSelected(new Set())
+    else setSelected(new Set(allItems.map(m => m.id)))
+  }
+
+  const exitSelectMode = () => {
+    setSelectMode(false)
+    setSelected(new Set())
+    setMergeName('')
+  }
+
+  const handleMerge = (ids: string[], name: string) => {
+    if (ids.length < 2 || !name.trim()) return
+    bulkMerge.mutate({ merchantIds: ids, displayName: name.trim() }, {
+      onSuccess: () => {
+        exitSelectMode()
+      },
+    })
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">Merchants</h2>
-        <button
-          onClick={() => runCategorisation.mutate({ includeLlm: false })}
-          disabled={runCategorisation.isPending}
-          className="px-3 py-1.5 text-xs bg-accent/20 text-accent rounded-md hover:bg-accent/30 disabled:opacity-50"
-        >
-          {runCategorisation.isPending ? 'Running...' : 'Run Auto-Categorisation'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => runCategorisation.mutate({ includeLlm: false })}
+            disabled={runCategorisation.isPending}
+            className="px-3 py-1.5 text-xs bg-accent/20 text-accent rounded-md hover:bg-accent/30 disabled:opacity-50"
+          >
+            {runCategorisation.isPending ? 'Running...' : 'Run Auto-Categorisation'}
+          </button>
+        </div>
       </div>
 
       {/* Suggestion review panel */}
@@ -494,7 +530,24 @@ export default function Merchants() {
           Unmapped only
         </label>
         <span className="text-text-secondary text-sm ml-auto">{allItems.length} merchants shown</span>
+        <button
+          onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
+          className="text-xs px-3 py-1.5 border border-border rounded-md text-text-secondary hover:text-text-primary hover:border-accent"
+        >
+          {selectMode ? 'Exit Select' : 'Select'}
+        </button>
       </div>
+
+      {/* Merge all search results shortcut */}
+      {debouncedSearch && allItems.length >= 2 && !selectMode && (
+        <MergeAllBar
+          count={allItems.length}
+          searchTerm={debouncedSearch}
+          merchantIds={allItems.map(m => m.id)}
+          onMerge={handleMerge}
+          isPending={bulkMerge.isPending}
+        />
+      )}
 
       {/* Categorisation result toast */}
       {runCategorisation.data && (
@@ -513,6 +566,17 @@ export default function Merchants() {
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-bg-primary">
             <tr className="text-text-secondary text-left text-xs uppercase tracking-wider">
+              {selectMode && (
+                <th className="pb-2 pr-2 w-8">
+                  <input
+                    type="checkbox"
+                    checked={selected.size === allItems.length && allItems.length > 0}
+                    ref={el => { if (el) el.indeterminate = selected.size > 0 && selected.size < allItems.length }}
+                    onChange={toggleSelectAll}
+                    className="accent-accent"
+                  />
+                </th>
+              )}
               <th className="pb-2 pr-4">Merchant</th>
               <th className="pb-2 pr-4">Category</th>
               <th className="pb-2 pr-4">Confidence</th>
@@ -527,7 +591,10 @@ export default function Merchants() {
                 merchant={m}
                 categoryOptions={categoryOptions}
                 onCategoryChange={handleCategoryChange}
-                onSelect={() => setSelectedMerchantId(m.id)}
+                onSelect={() => selectMode ? toggleSelect(m.id) : setSelectedMerchantId(m.id)}
+                selectMode={selectMode}
+                isSelected={selected.has(m.id)}
+                onToggle={() => toggleSelect(m.id)}
               />
             ))}
           </tbody>
@@ -546,6 +613,36 @@ export default function Merchants() {
         </div>
       )}
 
+      {/* Merge toolbar (select mode) */}
+      {selectMode && selected.size >= 2 && (
+        <div className="fixed bottom-0 left-0 right-0 bg-bg-card border-t border-border px-6 py-3 flex items-center gap-3 z-50">
+          <span className="text-sm font-medium">{selected.size} merchants selected</span>
+          <span className="text-border">|</span>
+          <label className="text-sm text-text-secondary">Merge as:</label>
+          <input
+            type="text"
+            value={mergeName}
+            onChange={e => setMergeName(e.target.value)}
+            placeholder="Display name for merged merchant..."
+            className="bg-bg-primary border border-border rounded-md px-2 py-1 text-sm text-text-primary focus:outline-none focus:border-accent w-64"
+            autoFocus
+          />
+          <button
+            onClick={() => handleMerge(Array.from(selected), mergeName)}
+            disabled={bulkMerge.isPending || !mergeName.trim()}
+            className="text-xs px-3 py-1.5 bg-accent text-white rounded-md hover:bg-accent-hover disabled:opacity-50"
+          >
+            {bulkMerge.isPending ? 'Merging...' : `Merge ${selected.size} merchants`}
+          </button>
+          <button
+            onClick={exitSelectMode}
+            className="text-xs px-3 py-1.5 border border-border rounded-md text-text-secondary hover:text-text-primary ml-auto"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
       {/* Detail slide-over */}
       {selectedMerchantId && (
         <MerchantSlideOver
@@ -558,19 +655,63 @@ export default function Merchants() {
   )
 }
 
+// ── Merge All Search Results Bar ──
+
+function MergeAllBar({
+  count, searchTerm, merchantIds, onMerge, isPending,
+}: {
+  count: number
+  searchTerm: string
+  merchantIds: string[]
+  onMerge: (ids: string[], name: string) => void
+  isPending: boolean
+}) {
+  const [name, setName] = useState(searchTerm)
+  return (
+    <div className="bg-accent/10 border border-accent/30 rounded-lg px-4 py-2 flex items-center gap-3">
+      <span className="text-sm text-accent">{count} merchants match — merge into one?</span>
+      <input
+        type="text"
+        value={name}
+        onChange={e => setName(e.target.value)}
+        placeholder="Display name..."
+        className="bg-bg-primary border border-border rounded-md px-2 py-1 text-sm text-text-primary focus:outline-none focus:border-accent w-48"
+      />
+      <button
+        onClick={() => onMerge(merchantIds, name)}
+        disabled={isPending || !name.trim()}
+        className="text-xs px-3 py-1.5 bg-accent text-white rounded-md hover:bg-accent-hover disabled:opacity-50"
+      >
+        {isPending ? 'Merging...' : `Merge all ${count}`}
+      </button>
+    </div>
+  )
+}
+
 function MerchantRow({
   merchant: m,
   categoryOptions,
   onCategoryChange,
   onSelect,
+  selectMode = false,
+  isSelected = false,
+  onToggle,
 }: {
   merchant: MerchantItem
   categoryOptions: { path: string; name: string }[]
   onCategoryChange: (id: string, value: string) => void
   onSelect: () => void
+  selectMode?: boolean
+  isSelected?: boolean
+  onToggle?: () => void
 }) {
   return (
-    <tr className="border-b border-border/50 hover:bg-bg-hover">
+    <tr className={`border-b border-border/50 hover:bg-bg-hover ${isSelected ? 'bg-accent/5' : ''}`}>
+      {selectMode && (
+        <td className="py-2 pr-2 w-8">
+          <input type="checkbox" checked={isSelected} onChange={onToggle} className="accent-accent" />
+        </td>
+      )}
       <td className="py-2 pr-4">
         <button
           onClick={onSelect}

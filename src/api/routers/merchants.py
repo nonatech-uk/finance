@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.api.deps import get_conn
 from src.api.models import (
+    BulkMerchantMerge,
     CategorySuggestionItem,
     CategorySuggestionList,
     DisplayRuleCreate,
@@ -350,6 +351,57 @@ def update_merchant_mapping(
         "name": row[1],
         "category_hint": body.category_hint,
         "updated": True,
+    }
+
+
+@router.post("/merchants/bulk-merge")
+def bulk_merge_merchants(body: BulkMerchantMerge, conn=Depends(get_conn)):
+    """Merge multiple merchants into one, optionally setting a display name.
+
+    The first merchant in the list (or the one with the most mappings) survives.
+    """
+    from src.categorisation.merger import merge
+
+    ids = [str(mid) for mid in body.merchant_ids]
+    if len(ids) < 2:
+        raise HTTPException(400, "Need at least 2 merchants to merge")
+
+    cur = conn.cursor()
+
+    # Pick surviving merchant: prefer one with category_hint, then most mappings
+    cur.execute("""
+        SELECT cm.id, cm.name, cm.category_hint,
+               (SELECT count(*) FROM merchant_raw_mapping WHERE canonical_merchant_id = cm.id) AS cnt
+        FROM canonical_merchant cm
+        WHERE cm.id = ANY(%s::uuid[]) AND cm.merged_into_id IS NULL
+        ORDER BY (cm.category_hint IS NOT NULL) DESC, cnt DESC, cm.name
+    """, (ids,))
+    rows = cur.fetchall()
+    if len(rows) < 2:
+        raise HTTPException(400, "Need at least 2 active (non-merged) merchants")
+
+    surviving_id = str(rows[0][0])
+    merged_count = 0
+
+    for row in rows[1:]:
+        try:
+            merge(conn, secondary_id=str(row[0]), surviving_id=surviving_id)
+            merged_count += 1
+        except ValueError:
+            pass
+
+    # Set display name if provided
+    if body.display_name:
+        cur.execute(
+            "UPDATE canonical_merchant SET display_name = %s WHERE id = %s",
+            (body.display_name, surviving_id),
+        )
+
+    conn.commit()
+    return {
+        "surviving_id": surviving_id,
+        "merged": merged_count,
+        "display_name": body.display_name,
     }
 
 

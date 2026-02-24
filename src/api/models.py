@@ -249,6 +249,13 @@ class MerchantMergeRequest(BaseModel):
     merge_from_id: UUID
 
 
+class BulkMerchantMerge(BaseModel):
+    """Merge multiple merchants into one, optionally setting a display name."""
+
+    merchant_ids: list[UUID]
+    display_name: str | None = None
+
+
 class CategorySuggestionItem(BaseModel):
     id: int
     canonical_merchant_id: UUID

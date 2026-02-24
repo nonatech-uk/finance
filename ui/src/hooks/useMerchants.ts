@@ -5,6 +5,7 @@ import {
   updateMerchantMapping,
   updateMerchantName,
   mergeMerchant,
+  bulkMergeMerchants,
   fetchSuggestions,
   reviewSuggestion,
   runCategorisation,
@@ -66,6 +67,20 @@ export function useMergeMerchant() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['merchants'] })
       queryClient.invalidateQueries({ queryKey: ['merchant'] })
+    },
+  })
+}
+
+export function useBulkMergeMerchants() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ merchantIds, displayName }: { merchantIds: string[]; displayName?: string }) =>
+      bulkMergeMerchants(merchantIds, displayName),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['merchants'] })
+      queryClient.invalidateQueries({ queryKey: ['merchant'] })
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['suggestions'] })
     },
   })
 }

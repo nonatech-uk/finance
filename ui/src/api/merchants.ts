@@ -44,6 +44,13 @@ export function mergeMerchant(survivingId: string, mergeFromId: string) {
   )
 }
 
+export function bulkMergeMerchants(merchantIds: string[], displayName?: string) {
+  return apiFetch<{ surviving_id: string; merged: number; display_name: string | null }>(
+    '/merchants/bulk-merge',
+    { method: 'POST', body: JSON.stringify({ merchant_ids: merchantIds, display_name: displayName || null }) }
+  )
+}
+
 export function fetchSuggestions(status = 'pending', limit = 50) {
   return apiFetch<CategorySuggestionList>(`/merchants/suggestions?status=${status}&limit=${limit}`)
 }
