@@ -635,8 +635,20 @@ def bulk_update_merchant_name(body: BulkMerchantNameUpdate, conn=Depends(get_con
     """, (body.display_name, merchant_ids))
     affected = cur.rowcount
 
+    # Auto-merge if multiple distinct merchants got the same display name
+    merged_count = 0
+    if len(merchant_ids) > 1:
+        from src.categorisation.merger import merge
+        surviving_id = merchant_ids[0]
+        for secondary_id in merchant_ids[1:]:
+            try:
+                merge(conn, secondary_id=secondary_id, surviving_id=surviving_id)
+                merged_count += 1
+            except ValueError:
+                pass
+
     conn.commit()
-    return {"ok": True, "affected": affected, "merchant_ids": merchant_ids}
+    return {"ok": True, "affected": affected, "merchant_ids": merchant_ids, "merged": merged_count}
 
 
 @router.post("/transactions/bulk/tags/add")

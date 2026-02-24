@@ -456,8 +456,6 @@ export default function Merchants() {
     mappingMutation.mutate({ id: merchantId, categoryHint: value || null })
   }
 
-  if (isLoading) return <LoadingSpinner />
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -511,28 +509,30 @@ export default function Merchants() {
       )}
 
       {/* Merchant table */}
-      <table className="w-full text-sm">
-        <thead className="sticky top-0 bg-bg-primary">
-          <tr className="text-text-secondary text-left text-xs uppercase tracking-wider">
-            <th className="pb-2 pr-4">Merchant</th>
-            <th className="pb-2 pr-4">Category</th>
-            <th className="pb-2 pr-4">Confidence</th>
-            <th className="pb-2 pr-4 text-right">Mappings</th>
-            <th className="pb-2">Assign Category</th>
-          </tr>
-        </thead>
-        <tbody>
-          {allItems.map(m => (
-            <MerchantRow
-              key={m.id}
-              merchant={m}
-              categoryOptions={categoryOptions}
-              onCategoryChange={handleCategoryChange}
-              onSelect={() => setSelectedMerchantId(m.id)}
-            />
-          ))}
-        </tbody>
-      </table>
+      {isLoading ? <LoadingSpinner /> : (
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 bg-bg-primary">
+            <tr className="text-text-secondary text-left text-xs uppercase tracking-wider">
+              <th className="pb-2 pr-4">Merchant</th>
+              <th className="pb-2 pr-4">Category</th>
+              <th className="pb-2 pr-4">Confidence</th>
+              <th className="pb-2 pr-4 text-right">Mappings</th>
+              <th className="pb-2">Assign Category</th>
+            </tr>
+          </thead>
+          <tbody>
+            {allItems.map(m => (
+              <MerchantRow
+                key={m.id}
+                merchant={m}
+                categoryOptions={categoryOptions}
+                onCategoryChange={handleCategoryChange}
+                onSelect={() => setSelectedMerchantId(m.id)}
+              />
+            ))}
+          </tbody>
+        </table>
+      )}
 
       {hasNextPage && (
         <div className="py-4 text-center">
