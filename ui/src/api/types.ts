@@ -19,6 +19,12 @@ export interface TransactionItem {
   category_type: string | null
   category_is_override: boolean
   note: string | null
+  tags: string[]
+}
+
+export interface TagItem {
+  tag: string
+  source: string
 }
 
 export interface TransactionList {
@@ -59,6 +65,7 @@ export interface TransactionDetail extends TransactionItem {
   raw_data: Record<string, unknown> | null
   note: string | null
   note_source: string | null
+  tags: TagItem[]
   dedup_group: DedupGroupInfo | null
   economic_event: EconomicEventInfo | null
 }

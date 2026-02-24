@@ -33,6 +33,7 @@ class TransactionItem(BaseModel):
     category_type: str | None = None
     category_is_override: bool = False
     note: str | None = None
+    tags: list[str] = []
 
 
 class TransactionList(BaseModel):
@@ -69,12 +70,20 @@ class EconomicEventInfo(BaseModel):
     legs: list[EconomicEventLeg]
 
 
+class TagItem(BaseModel):
+    """A tag on a transaction."""
+
+    tag: str
+    source: str
+
+
 class TransactionDetail(TransactionItem):
     """Full transaction detail including dedup and economic event info."""
 
     raw_data: dict | None = None
     note: str | None = None
     note_source: str | None = None
+    tags: list[TagItem] = []  # type: ignore[assignment]
     dedup_group: DedupGroupInfo | None = None
     economic_event: EconomicEventInfo | None = None
 
@@ -89,6 +98,12 @@ class CategoryUpdate(BaseModel):
     """Request body for updating a transaction category override."""
 
     category_path: str
+
+
+class TagUpdate(BaseModel):
+    """Request body for adding a tag."""
+
+    tag: str
 
 
 class LinkTransferRequest(BaseModel):

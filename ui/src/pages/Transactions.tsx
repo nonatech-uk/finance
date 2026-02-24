@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
-import { useTransactions, useTransaction, useUpdateNote, useUpdateTransactionCategory, useLinkTransfer, useUnlinkEvent } from '../hooks/useTransactions'
+import { useTransactions, useTransaction, useUpdateNote, useUpdateTransactionCategory, useLinkTransfer, useUnlinkEvent, useAllTags, useAddTag, useRemoveTag } from '../hooks/useTransactions'
 import { useUpdateMerchantName } from '../hooks/useMerchants'
 import { useCategories } from '../hooks/useCategories'
 import { useOverview } from '../hooks/useStats'
@@ -7,7 +7,7 @@ import CurrencyAmount from '../components/common/CurrencyAmount'
 import Badge from '../components/common/Badge'
 import LoadingSpinner from '../components/common/LoadingSpinner'
 import JsonViewer from '../components/common/JsonViewer'
-import type { TransactionItem, TransactionDetail, CategoryItem } from '../api/types'
+import type { TransactionItem, TransactionDetail, CategoryItem, TagItem } from '../api/types'
 
 export default function Transactions() {
   const [search, setSearch] = useState('')
@@ -210,6 +210,9 @@ function TransactionDetailContent({ detail }: { detail: import('../api/types').T
 
       {/* Note */}
       <NoteSection transactionId={detail.id} note={detail.note} noteSource={detail.note_source} />
+
+      {/* Tags */}
+      <TagSection transactionId={detail.id} tags={detail.tags} />
 
       {/* Dedup group */}
       {detail.dedup_group && (
@@ -463,6 +466,165 @@ function TransferSection({ detail }: { detail: TransactionDetail }) {
         </div>
       ) : (
         <div className="text-text-secondary text-xs italic">No linked transfer</div>
+      )}
+    </section>
+  )
+}
+
+function TagSection({ transactionId, tags }: { transactionId: string; tags: TagItem[] }) {
+  const [adding, setAdding] = useState(false)
+  const [input, setInput] = useState('')
+  const [highlightIdx, setHighlightIdx] = useState(-1)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const { data: allTags } = useAllTags()
+  const addTag = useAddTag()
+  const removeTag = useRemoveTag()
+
+  // Filtered autocomplete suggestions (exclude already-applied tags)
+  const existingTagNames = useMemo(() => new Set(tags.map(t => t.tag)), [tags])
+  const suggestions = useMemo(() => {
+    if (!allTags?.items || !input.trim()) return []
+    const q = input.trim().toLowerCase()
+    return allTags.items
+      .filter(t => !existingTagNames.has(t.tag) && t.tag.toLowerCase().includes(q))
+      .slice(0, 8)
+  }, [allTags, input, existingTagNames])
+
+  // Reset highlight when suggestions change
+  useEffect(() => { setHighlightIdx(-1) }, [suggestions])
+
+  // Focus input when entering add mode
+  useEffect(() => {
+    if (adding && inputRef.current) inputRef.current.focus()
+  }, [adding])
+
+  const handleAdd = (tagName: string) => {
+    const trimmed = tagName.trim()
+    if (!trimmed) return
+    addTag.mutate(
+      { id: transactionId, tag: trimmed },
+      { onSuccess: () => { setInput(''); setAdding(false) } },
+    )
+  }
+
+  const handleRemove = (tagName: string) => {
+    removeTag.mutate({ id: transactionId, tag: tagName })
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (highlightIdx >= 0 && highlightIdx < suggestions.length) {
+        handleAdd(suggestions[highlightIdx].tag)
+      } else {
+        handleAdd(input)
+      }
+    }
+    if (e.key === 'Escape') {
+      setInput('')
+      setAdding(false)
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHighlightIdx(prev => (prev < suggestions.length - 1 ? prev + 1 : prev))
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlightIdx(prev => (prev > 0 ? prev - 1 : -1))
+    }
+  }
+
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-2">
+        <h4 className="text-xs uppercase text-text-secondary">Tags</h4>
+        {!adding && (
+          <button
+            onClick={() => setAdding(true)}
+            className="text-text-secondary hover:text-accent text-xs ml-auto"
+          >
+            + Add tag
+          </button>
+        )}
+      </div>
+
+      {/* Existing tags */}
+      {tags.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {tags.map(t => (
+            <span
+              key={t.tag}
+              className="inline-flex items-center gap-1 bg-accent/10 text-accent text-xs px-2 py-0.5 rounded-full"
+            >
+              {t.tag}
+              {t.source === 'ibank_import' && (
+                <span className="text-[9px] text-text-secondary bg-bg-primary px-1 py-px rounded">iBank</span>
+              )}
+              <button
+                onClick={() => handleRemove(t.tag)}
+                disabled={removeTag.isPending}
+                className="text-accent/60 hover:text-accent ml-0.5 disabled:opacity-50"
+                title="Remove tag"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : !adding ? (
+        <div className="text-text-secondary text-xs italic mb-2">No tags</div>
+      ) : null}
+
+      {/* Add tag input with autocomplete */}
+      {adding && (
+        <div>
+          <div className="relative">
+            <input
+              ref={inputRef}
+              type="text"
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Type a tag name..."
+              className="w-full bg-bg-primary border border-border rounded-md px-3 py-1.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent"
+            />
+            {suggestions.length > 0 && (
+              <div
+                ref={dropdownRef}
+                className="absolute z-20 top-full left-0 right-0 mt-1 bg-bg-secondary border border-border rounded-md shadow-lg max-h-48 overflow-auto"
+              >
+                {suggestions.map((s, idx) => (
+                  <button
+                    key={s.tag}
+                    onMouseDown={e => { e.preventDefault(); handleAdd(s.tag) }}
+                    className={`w-full text-left px-3 py-1.5 text-sm flex justify-between items-center ${
+                      idx === highlightIdx ? 'bg-accent/10 text-accent' : 'text-text-primary hover:bg-bg-hover'
+                    }`}
+                  >
+                    <span>{s.tag}</span>
+                    <span className="text-text-secondary text-xs">{s.count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="flex gap-2 mt-2">
+            <button
+              onClick={() => handleAdd(input)}
+              disabled={addTag.isPending || !input.trim()}
+              className="text-xs px-3 py-1 bg-accent text-white rounded-md hover:bg-accent-hover disabled:opacity-50"
+            >
+              {addTag.isPending ? 'Adding...' : 'Add'}
+            </button>
+            <button
+              onClick={() => { setInput(''); setAdding(false) }}
+              className="text-xs px-3 py-1 text-text-secondary hover:text-text-primary"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
     </section>
   )

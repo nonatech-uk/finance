@@ -14,6 +14,7 @@ export interface TransactionFilters {
   amount_max?: number
   currency?: string
   search?: string
+  tag?: string
 }
 
 export function fetchTransactions(filters: TransactionFilters = {}) {
@@ -57,4 +58,23 @@ export function unlinkEvent(eventId: string) {
   return apiFetch<{ ok: boolean }>(`/economic-events/${eventId}`, {
     method: 'DELETE',
   })
+}
+
+export function addTransactionTag(id: string, tag: string) {
+  return apiFetch<{ ok: boolean }>(`/transactions/${id}/tags`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tag }),
+  })
+}
+
+export function removeTransactionTag(id: string, tagName: string) {
+  return apiFetch<{ ok: boolean }>(
+    `/transactions/${id}/tags/${encodeURIComponent(tagName)}`,
+    { method: 'DELETE' },
+  )
+}
+
+export function fetchAllTags() {
+  return apiFetch<{ items: { tag: string; count: number }[] }>('/tags')
 }

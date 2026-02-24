@@ -15,6 +15,8 @@ from src.api.models import (
     EconomicEventLeg,
     LinkTransferRequest,
     NoteUpdate,
+    TagItem,
+    TagUpdate,
     TransactionDetail,
     TransactionItem,
     TransactionList,
@@ -37,6 +39,7 @@ def list_transactions(
     amount_max: Decimal | None = None,
     currency: str | None = None,
     search: str | None = Query(None, description="Search merchant name"),
+    tag: str | None = Query(None, description="Filter by tag"),
     conn=Depends(get_conn),
 ):
     """List deduplicated transactions with full merchant/category chain."""
@@ -93,6 +96,11 @@ def list_transactions(
     if category:
         conditions.append("COALESCE(tcat.full_path, cat.full_path) LIKE %(category)s")
         params["category"] = f"{category}%"
+    if tag:
+        conditions.append(
+            "EXISTS (SELECT 1 FROM transaction_tag tt WHERE tt.raw_transaction_id = rt.id AND tt.tag = %(tag)s)"
+        )
+        params["tag"] = tag
 
     # Always exclude archived accounts
     conditions.append("(a.is_archived IS NOT TRUE)")
@@ -137,6 +145,19 @@ def list_transactions(
         rows = rows[:limit]
 
     items = [TransactionItem(**dict(zip(columns, row))) for row in rows]
+
+    # Batch-load tags for returned items
+    if items:
+        txn_ids = [str(item.id) for item in items]
+        cur.execute("""
+            SELECT raw_transaction_id, array_agg(tag ORDER BY tag)
+            FROM transaction_tag
+            WHERE raw_transaction_id = ANY(%s::uuid[])
+            GROUP BY raw_transaction_id
+        """, (txn_ids,))
+        tags_by_txn = {str(r[0]): r[1] for r in cur.fetchall()}
+        for item in items:
+            item.tags = tags_by_txn.get(str(item.id), [])
 
     next_cursor = None
     if has_more and items:
@@ -247,8 +268,17 @@ def get_transaction(
             legs=legs,
         )
 
+    # Tags
+    cur.execute("""
+        SELECT tag, source FROM transaction_tag
+        WHERE raw_transaction_id = %s
+        ORDER BY tag
+    """, (str(transaction_id),))
+    tags = [TagItem(tag=r[0], source=r[1]) for r in cur.fetchall()]
+
     return TransactionDetail(
         **txn_data,
+        tags=tags,
         dedup_group=dedup_group,
         economic_event=economic_event,
     )
@@ -461,6 +491,69 @@ def unlink_event(
             DELETE FROM transaction_category_override
             WHERE raw_transaction_id = %s AND category_path = '+Transfer' AND source = 'system'
         """, (str(tid),))
+
+    conn.commit()
+    return {"ok": True}
+
+
+# ── Tags ─────────────────────────────────────────────────────────────────────
+
+
+@router.get("/tags")
+def list_tags(conn=Depends(get_conn)):
+    """List all known tags with usage counts (for autocomplete)."""
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT tag, COUNT(*) AS usage_count
+        FROM transaction_tag
+        GROUP BY tag
+        ORDER BY tag
+    """)
+    return {"items": [{"tag": r[0], "count": r[1]} for r in cur.fetchall()]}
+
+
+@router.post("/transactions/{transaction_id}/tags")
+def add_tag(
+    transaction_id: UUID,
+    body: TagUpdate,
+    conn=Depends(get_conn),
+):
+    """Add a tag to a transaction."""
+    cur = conn.cursor()
+
+    cur.execute("SELECT 1 FROM raw_transaction WHERE id = %s", (str(transaction_id),))
+    if not cur.fetchone():
+        raise HTTPException(404, "Transaction not found")
+
+    tag_name = body.tag.strip()
+    if not tag_name:
+        raise HTTPException(400, "Tag cannot be empty")
+
+    cur.execute("""
+        INSERT INTO transaction_tag (raw_transaction_id, tag, source)
+        VALUES (%s, %s, 'user')
+        ON CONFLICT (raw_transaction_id, tag) DO NOTHING
+    """, (str(transaction_id), tag_name))
+
+    conn.commit()
+    return {"ok": True}
+
+
+@router.delete("/transactions/{transaction_id}/tags/{tag_name}")
+def remove_tag(
+    transaction_id: UUID,
+    tag_name: str,
+    conn=Depends(get_conn),
+):
+    """Remove a tag from a transaction."""
+    cur = conn.cursor()
+    cur.execute("""
+        DELETE FROM transaction_tag
+        WHERE raw_transaction_id = %s AND tag = %s
+    """, (str(transaction_id), tag_name))
+
+    if cur.rowcount == 0:
+        raise HTTPException(404, "Tag not found on this transaction")
 
     conn.commit()
     return {"ok": True}
