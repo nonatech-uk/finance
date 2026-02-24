@@ -1,5 +1,6 @@
 """Merchant endpoints."""
 
+from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -30,23 +31,51 @@ def list_merchants(
     search: str | None = Query(None, description="Search merchant name"),
     unmapped: bool = Query(False, description="Only show merchants without category"),
     has_suggestions: bool = Query(False, description="Only show merchants with pending suggestions"),
+    last_used_after: date | None = Query(None, description="Only merchants with transactions on or after this date"),
+    last_used_before: date | None = Query(None, description="Only merchants with transactions on or before this date"),
     cursor: str | None = Query(None, description="Cursor for pagination (merchant name)"),
+    offset: int = Query(0, ge=0, description="Offset for non-name sorts"),
+    sort_by: str = Query("name", description="Sort column: name, category, confidence, mappings"),
+    sort_dir: str = Query("asc", description="Sort direction: asc or desc"),
     limit: int = Query(50, ge=1, le=200),
     conn=Depends(get_conn),
 ):
     """List canonical merchants with mapping counts."""
+    VALID_SORT_COLUMNS = {
+        "name": "COALESCE(cm.display_name, cm.name)",
+        "category": "cm.category_hint",
+        "confidence": "cm.category_confidence",
+        "mappings": "COUNT(mrm.cleaned_merchant)",
+    }
+    if sort_by not in VALID_SORT_COLUMNS:
+        raise HTTPException(400, f"Invalid sort_by: {sort_by}")
+    if sort_dir not in ("asc", "desc"):
+        raise HTTPException(400, "sort_dir must be 'asc' or 'desc'")
+
     cur = conn.cursor()
+
+    # Build the active-transaction existence check, optionally with date bounds
+    date_filters = []
+    if last_used_after:
+        date_filters.append("AND at2.posted_at >= %(last_used_after)s")
+    if last_used_before:
+        date_filters.append("AND at2.posted_at <= %(last_used_before)s")
+    date_clause = " ".join(date_filters)
 
     conditions = [
         "cm.merged_into_id IS NULL",
-        """EXISTS (
+        f"""EXISTS (
             SELECT 1 FROM merchant_raw_mapping mrm2
             JOIN cleaned_transaction ct2 ON ct2.cleaned_merchant = mrm2.cleaned_merchant
             JOIN active_transaction at2 ON at2.id = ct2.raw_transaction_id
-            WHERE mrm2.canonical_merchant_id = cm.id
+            WHERE mrm2.canonical_merchant_id = cm.id {date_clause}
         )""",
     ]
     params: dict = {"limit": limit + 1}
+    if last_used_after:
+        params["last_used_after"] = last_used_after
+    if last_used_before:
+        params["last_used_before"] = last_used_before
 
     if search:
         conditions.append("(cm.name ILIKE %(search)s OR cm.display_name ILIKE %(search)s)")
@@ -58,9 +87,25 @@ def list_merchants(
             EXISTS (SELECT 1 FROM category_suggestion cs
                     WHERE cs.canonical_merchant_id = cm.id AND cs.status = 'pending')
         """)
-    if cursor:
-        conditions.append("cm.name > %(cursor)s")
-        params["cursor"] = cursor
+
+    # Sorting & pagination
+    direction = sort_dir.upper()
+    sort_col_sql = VALID_SORT_COLUMNS[sort_by]
+
+    if sort_by == "name":
+        # Keyset pagination on name
+        if cursor:
+            op = ">" if sort_dir == "asc" else "<"
+            conditions.append(f"cm.name {op} %(cursor)s")
+            params["cursor"] = cursor
+        order_clause = f"ORDER BY cm.name {direction}"
+        pagination_clause = "LIMIT %(limit)s"
+    else:
+        # Offset pagination for other columns
+        nulls = "NULLS LAST" if sort_by in ("category", "confidence") else ""
+        order_clause = f"ORDER BY {sort_col_sql} {direction} {nulls}, cm.name ASC"
+        pagination_clause = "LIMIT %(limit)s OFFSET %(offset)s"
+        params["offset"] = offset
 
     where = "WHERE " + " AND ".join(conditions)
 
@@ -78,8 +123,8 @@ def list_merchants(
         {where}
         GROUP BY cm.id, cm.name, cm.display_name, cm.category_hint,
                  cm.category_method, cm.category_confidence
-        ORDER BY cm.name
-        LIMIT %(limit)s
+        {order_clause}
+        {pagination_clause}
     """, params)
 
     columns = [desc[0] for desc in cur.description]
@@ -92,7 +137,7 @@ def list_merchants(
     items = [MerchantItem(**dict(zip(columns, row))) for row in rows]
 
     next_cursor = None
-    if has_more and items:
+    if has_more and items and sort_by == "name":
         next_cursor = items[-1].name
 
     return MerchantList(items=items, next_cursor=next_cursor, has_more=has_more)

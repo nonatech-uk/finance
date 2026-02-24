@@ -16,12 +16,25 @@ import {
 } from '../api/merchants'
 import type { DisplayRule } from '../api/types'
 
-export function useMerchants(filters: Omit<MerchantFilters, 'cursor'>) {
+export function useMerchants(filters: Omit<MerchantFilters, 'cursor' | 'offset'>) {
+  const isNameSort = !filters.sort_by || filters.sort_by === 'name'
+
   return useInfiniteQuery({
     queryKey: ['merchants', filters],
-    queryFn: ({ pageParam }) => fetchMerchants({ ...filters, cursor: pageParam }),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.has_more ? lastPage.next_cursor ?? undefined : undefined,
+    queryFn: ({ pageParam }) => {
+      if (isNameSort) {
+        return fetchMerchants({ ...filters, cursor: pageParam as string | undefined })
+      }
+      return fetchMerchants({ ...filters, offset: (pageParam as number) || 0 })
+    },
+    initialPageParam: isNameSort ? (undefined as string | undefined) : (0 as number | undefined),
+    getNextPageParam: (lastPage, allPages) => {
+      if (!lastPage.has_more) return undefined
+      if (isNameSort) {
+        return lastPage.next_cursor ?? undefined
+      }
+      return allPages.reduce((sum, p) => sum + p.items.length, 0)
+    },
   })
 }
 

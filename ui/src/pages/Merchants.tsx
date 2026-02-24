@@ -18,15 +18,84 @@ import Badge from '../components/common/Badge'
 import LoadingSpinner from '../components/common/LoadingSpinner'
 import type { CategoryItem, MerchantItem } from '../api/types'
 
-function flattenCategories(items: CategoryItem[], prefix = ''): { path: string; name: string }[] {
-  const result: { path: string; name: string }[] = []
+type CategoryOption = { path: string; name: string; categoryType: string | null }
+
+function flattenCategories(
+  items: CategoryItem[],
+  prefix = '',
+  inheritedType: string | null = null,
+): CategoryOption[] {
+  const result: CategoryOption[] = []
   for (const cat of items) {
-    result.push({ path: cat.full_path, name: prefix ? `${prefix} › ${cat.name}` : cat.name })
+    // Use parent's type for children (DB has some mis-typed children)
+    const effectiveType = inheritedType || cat.category_type
+    result.push({ path: cat.full_path, name: prefix ? `${prefix} › ${cat.name}` : cat.name, categoryType: effectiveType })
     if (cat.children.length > 0) {
-      result.push(...flattenCategories(cat.children, cat.full_path))
+      result.push(...flattenCategories(cat.children, cat.full_path, effectiveType))
     }
   }
   return result
+}
+
+function CategorySelect({
+  value,
+  onChange,
+  options,
+  className,
+}: {
+  value: string
+  onChange: (value: string) => void
+  options: CategoryOption[]
+  className?: string
+}) {
+  const expenseOpts = options.filter(o => o.categoryType === 'expense')
+  const incomeOpts = options.filter(o => o.categoryType === 'income')
+
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      className={className}
+    >
+      <option value="">-- None --</option>
+      {expenseOpts.length > 0 && (
+        <optgroup label="Expense">
+          {expenseOpts.map(opt => (
+            <option key={opt.path} value={opt.path}>{opt.path}</option>
+          ))}
+        </optgroup>
+      )}
+      {incomeOpts.length > 0 && (
+        <optgroup label="Income">
+          {incomeOpts.map(opt => (
+            <option key={opt.path} value={opt.path}>{opt.path}</option>
+          ))}
+        </optgroup>
+      )}
+    </select>
+  )
+}
+
+function SortableHeader({
+  label, sortKey, currentSort, currentDir, onSort, align = 'left',
+}: {
+  label: string
+  sortKey: string
+  currentSort: string
+  currentDir: 'asc' | 'desc'
+  onSort: (key: string) => void
+  align?: 'left' | 'right'
+}) {
+  const isActive = currentSort === sortKey
+  const arrow = isActive ? (currentDir === 'asc' ? ' ▲' : ' ▼') : ''
+  return (
+    <th
+      className={`pb-2 pr-4 cursor-pointer hover:text-accent select-none ${align === 'right' ? 'text-right' : ''}`}
+      onClick={() => onSort(sortKey)}
+    >
+      {label}{arrow}
+    </th>
+  )
 }
 
 function confidenceBadge(confidence: string | null, method: string | null) {
@@ -101,7 +170,7 @@ function MerchantSlideOver({
 }: {
   merchantId: string
   onClose: () => void
-  categoryOptions: { path: string; name: string }[]
+  categoryOptions: CategoryOption[]
 }) {
   const { data, isLoading } = useMerchantDetail(merchantId)
   const nameMutation = useUpdateMerchantName()
@@ -165,16 +234,12 @@ function MerchantSlideOver({
         {/* Category */}
         <div>
           <label className="text-xs text-text-secondary uppercase tracking-wider block mb-1">Category</label>
-          <select
+          <CategorySelect
             value={data.category_hint || ''}
-            onChange={e => mappingMutation.mutate({ id: merchantId, categoryHint: e.target.value || null })}
+            onChange={v => mappingMutation.mutate({ id: merchantId, categoryHint: v || null })}
+            options={categoryOptions}
             className="w-full bg-bg-card border border-border rounded px-2 py-1 text-sm text-text-primary focus:outline-none focus:border-accent"
-          >
-            <option value="">-- None --</option>
-            {categoryOptions.map(opt => (
-              <option key={opt.path} value={opt.path}>{opt.path}</option>
-            ))}
-          </select>
+          />
           {data.category_method && (
             <div className="mt-1">
               {confidenceBadge(data.category_confidence, data.category_method)}
@@ -265,7 +330,7 @@ function MerchantSlideOver({
 
 // ── Display Rules Panel ──
 
-function DisplayRulesPanel({ categoryOptions }: { categoryOptions: { path: string; name: string }[] }) {
+function DisplayRulesPanel({ categoryOptions }: { categoryOptions: CategoryOption[] }) {
   const { data, isLoading } = useDisplayRules()
   const createMutation = useCreateRule()
   const deleteMutation = useDeleteRule()
@@ -344,16 +409,12 @@ function DisplayRulesPanel({ categoryOptions }: { categoryOptions: { path: strin
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className="text-xs text-text-secondary block mb-0.5">Category (optional)</label>
-                  <select
+                  <CategorySelect
                     value={newRule.category_hint || ''}
-                    onChange={e => setNewRule(r => ({ ...r, category_hint: e.target.value || null }))}
+                    onChange={v => setNewRule(r => ({ ...r, category_hint: v || null }))}
+                    options={categoryOptions}
                     className="w-full bg-bg-card border border-border rounded px-2 py-1 text-xs text-text-primary focus:outline-none focus:border-accent"
-                  >
-                    <option value="">-- None --</option>
-                    {categoryOptions.map(opt => (
-                      <option key={opt.path} value={opt.path}>{opt.path}</option>
-                    ))}
-                  </select>
+                  />
                 </div>
                 <div>
                   <label className="text-xs text-text-secondary block mb-0.5">Priority</label>
@@ -436,6 +497,9 @@ export default function Merchants() {
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [mergeName, setMergeName] = useState('')
+  const [sortBy, setSortBy] = useState('name')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [datePreset, setDatePreset] = useState<'12m' | '2y' | 'all'>('all')
   const runCategorisation = useRunCategorisation()
   const bulkMerge = useBulkMergeMerchants()
 
@@ -444,11 +508,31 @@ export default function Merchants() {
     return () => clearTimeout(t)
   }, [search])
 
+  const lastUsedAfter = useMemo(() => {
+    if (datePreset === 'all') return undefined
+    const d = new Date()
+    if (datePreset === '12m') d.setFullYear(d.getFullYear() - 1)
+    else if (datePreset === '2y') d.setFullYear(d.getFullYear() - 2)
+    return d.toISOString().slice(0, 10)
+  }, [datePreset])
+
   const filters = useMemo(() => ({
     limit: 100,
     search: debouncedSearch || undefined,
     unmapped: unmapped || undefined,
-  }), [debouncedSearch, unmapped])
+    last_used_after: lastUsedAfter,
+    sort_by: sortBy,
+    sort_dir: sortDir,
+  }), [debouncedSearch, unmapped, lastUsedAfter, sortBy, sortDir])
+
+  const handleSort = (key: string) => {
+    if (sortBy === key) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortBy(key)
+      setSortDir('asc')
+    }
+  }
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useMerchants(filters)
   const { data: categoryTree } = useCategories()
@@ -529,9 +613,32 @@ export default function Merchants() {
           />
           Unmapped only
         </label>
+        <div className="flex items-center gap-1 ml-2">
+          {([['12m', 'Last 12m'], ['2y', 'Last 2y'], ['all', 'All time']] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setDatePreset(key)}
+              className={`px-2 py-1 text-xs rounded-md border transition-colors ${
+                datePreset === key
+                  ? 'bg-accent/20 text-accent border-accent/40'
+                  : 'border-border text-text-secondary hover:text-text-primary hover:border-accent/30'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <span className="text-text-secondary text-sm ml-auto">{allItems.length} merchants shown</span>
         <button
-          onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
+          onClick={() => {
+            if (selectMode) {
+              exitSelectMode()
+            } else {
+              setSelectMode(true)
+              // Auto-select all visible items when entering select mode
+              setSelected(new Set(allItems.map(m => m.id)))
+            }
+          }}
           className="text-xs px-3 py-1.5 border border-border rounded-md text-text-secondary hover:text-text-primary hover:border-accent"
         >
           {selectMode ? 'Exit Select' : 'Select'}
@@ -577,10 +684,10 @@ export default function Merchants() {
                   />
                 </th>
               )}
-              <th className="pb-2 pr-4">Merchant</th>
-              <th className="pb-2 pr-4">Category</th>
-              <th className="pb-2 pr-4">Confidence</th>
-              <th className="pb-2 pr-4 text-right">Mappings</th>
+              <SortableHeader label="Merchant" sortKey="name" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+              <SortableHeader label="Category" sortKey="category" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+              <SortableHeader label="Confidence" sortKey="confidence" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+              <SortableHeader label="Mappings" sortKey="mappings" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} align="right" />
               <th className="pb-2">Assign Category</th>
             </tr>
           </thead>
@@ -698,7 +805,7 @@ function MerchantRow({
   onToggle,
 }: {
   merchant: MerchantItem
-  categoryOptions: { path: string; name: string }[]
+  categoryOptions: CategoryOption[]
   onCategoryChange: (id: string, value: string) => void
   onSelect: () => void
   selectMode?: boolean
@@ -735,16 +842,12 @@ function MerchantRow({
       </td>
       <td className="py-2 pr-4 text-right text-text-secondary">{m.mapping_count}</td>
       <td className="py-2">
-        <select
+        <CategorySelect
           value={m.category_hint || ''}
-          onChange={e => onCategoryChange(m.id, e.target.value)}
+          onChange={v => onCategoryChange(m.id, v)}
+          options={categoryOptions}
           className="bg-bg-card border border-border rounded px-2 py-1 text-xs text-text-primary focus:outline-none focus:border-accent w-48"
-        >
-          <option value="">-- None --</option>
-          {categoryOptions.map(opt => (
-            <option key={opt.path} value={opt.path}>{opt.path}</option>
-          ))}
-        </select>
+        />
       </td>
     </tr>
   )

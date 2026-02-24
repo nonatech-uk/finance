@@ -5,7 +5,12 @@ export interface MerchantFilters {
   search?: string
   unmapped?: boolean
   has_suggestions?: boolean
+  last_used_after?: string
+  last_used_before?: string
   cursor?: string
+  offset?: number
+  sort_by?: string
+  sort_dir?: 'asc' | 'desc'
   limit?: number
 }
 
