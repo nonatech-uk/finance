@@ -36,7 +36,15 @@ def list_merchants(
     """List canonical merchants with mapping counts."""
     cur = conn.cursor()
 
-    conditions = ["cm.merged_into_id IS NULL"]
+    conditions = [
+        "cm.merged_into_id IS NULL",
+        """EXISTS (
+            SELECT 1 FROM merchant_raw_mapping mrm2
+            JOIN cleaned_transaction ct2 ON ct2.cleaned_merchant = mrm2.cleaned_merchant
+            JOIN active_transaction at2 ON at2.id = ct2.raw_transaction_id
+            WHERE mrm2.canonical_merchant_id = cm.id
+        )""",
+    ]
     params: dict = {"limit": limit + 1}
 
     if search:
@@ -98,7 +106,17 @@ def list_suggestions(
     """List category suggestions for review."""
     cur = conn.cursor()
 
-    cur.execute("""
+    # Only show suggestions for merchants that have active transactions
+    active_merchant_filter = """
+        EXISTS (
+            SELECT 1 FROM merchant_raw_mapping mrm
+            JOIN cleaned_transaction ct ON ct.cleaned_merchant = mrm.cleaned_merchant
+            JOIN active_transaction at2 ON at2.id = ct.raw_transaction_id
+            WHERE mrm.canonical_merchant_id = cm.id
+        )
+    """
+
+    cur.execute(f"""
         SELECT cs.id, cs.canonical_merchant_id, cm.name as merchant_name,
                cs.suggested_category_id, cat.full_path as suggested_category_path,
                cs.method, cs.confidence, cs.reasoning, cs.status, cs.created_at
@@ -106,6 +124,7 @@ def list_suggestions(
         JOIN canonical_merchant cm ON cm.id = cs.canonical_merchant_id
         JOIN category cat ON cat.id = cs.suggested_category_id
         WHERE cs.status = %(status)s
+          AND {active_merchant_filter}
         ORDER BY cs.confidence DESC, cm.name
         LIMIT %(limit)s
     """, {"status": status, "limit": limit})
@@ -115,11 +134,14 @@ def list_suggestions(
 
     items = [CategorySuggestionItem(**dict(zip(columns, row))) for row in rows]
 
-    # Get total count
-    cur.execute(
-        "SELECT count(*) FROM category_suggestion WHERE status = %(status)s",
-        {"status": status},
-    )
+    # Get total count (matching the same filter)
+    cur.execute(f"""
+        SELECT count(*)
+        FROM category_suggestion cs
+        JOIN canonical_merchant cm ON cm.id = cs.canonical_merchant_id
+        WHERE cs.status = %(status)s
+          AND {active_merchant_filter}
+    """, {"status": status})
     total = cur.fetchone()[0]
 
     return CategorySuggestionList(items=items, total=total)

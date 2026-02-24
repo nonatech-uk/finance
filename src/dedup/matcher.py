@@ -24,17 +24,59 @@ def find_superseded_transactions(
     account_ref: str,
     superseded_source: str,
 ) -> List[UUID]:
-    """Find all transactions from a superseded source that aren't already suppressed.
+    """Find transactions from a superseded source that aren't already suppressed.
+
+    Only suppresses transactions whose posted_at >= the earliest date of any
+    other (non-superseded) source for the same institution/account. This
+    preserves historical data that predates the superseding source's coverage.
 
     Returns list of raw_transaction IDs to be marked non-preferred.
     """
     cur = conn.cursor()
+
+    # Resolve aliases so we find coverage across all refs for this account
+    alias_refs = [account_ref]
+    cur.execute(
+        "SELECT canonical_ref FROM account_alias WHERE institution = %s AND account_ref = %s",
+        (institution, account_ref),
+    )
+    row = cur.fetchone()
+    if row:
+        alias_refs.append(row[0])
+    cur.execute(
+        "SELECT account_ref FROM account_alias WHERE institution = %s AND canonical_ref = %s",
+        (institution, account_ref),
+    )
+    for row in cur.fetchall():
+        alias_refs.append(row[0])
+
+    # Find the earliest date of any other source for this account
+    cur.execute("""
+        SELECT MIN(posted_at)
+        FROM raw_transaction
+        WHERE institution = %(inst)s
+          AND account_ref = ANY(%(refs)s)
+          AND source != %(src)s
+          AND source != 'synthetic'
+    """, {
+        "inst": institution,
+        "refs": alias_refs,
+        "src": superseded_source,
+    })
+    row = cur.fetchone()
+    coverage_start = row[0] if row and row[0] else None
+
+    if coverage_start is None:
+        # No other source exists — nothing to suppress against
+        return []
+
     cur.execute("""
         SELECT rt.id
         FROM raw_transaction rt
         WHERE rt.institution = %(inst)s
           AND rt.account_ref = %(acct)s
           AND rt.source = %(src)s
+          AND rt.posted_at >= %(coverage_start)s
           AND NOT EXISTS (
               SELECT 1 FROM dedup_group_member dgm
               WHERE dgm.raw_transaction_id = rt.id
@@ -45,6 +87,7 @@ def find_superseded_transactions(
         "inst": institution,
         "acct": account_ref,
         "src": superseded_source,
+        "coverage_start": coverage_start,
     })
     return [row[0] for row in cur.fetchall()]
 

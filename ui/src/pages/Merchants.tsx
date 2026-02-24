@@ -64,7 +64,7 @@ function SuggestionReviewPanel() {
               <span className="font-medium truncate block">{s.merchant_name}</span>
               <span className="text-text-secondary text-xs">{s.reasoning}</span>
             </div>
-            <Badge variant="accent">{s.suggested_category_path}</Badge>
+            <span className="text-xs text-accent font-medium whitespace-nowrap">{s.suggested_category_path.replace(/:/g, ' › ')}</span>
             <Badge variant={parseFloat(s.confidence) >= 0.85 ? 'income' : 'warning'}>
               {Math.round(parseFloat(s.confidence) * 100)}%
             </Badge>
