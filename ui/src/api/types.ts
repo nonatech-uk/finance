@@ -70,6 +70,21 @@ export interface TransactionDetail extends TransactionItem {
   economic_event: EconomicEventInfo | null
 }
 
+// ── Bulk Operations ──
+
+export interface BulkOperationResult {
+  ok: boolean
+  affected: number
+}
+
+export interface BulkMerchantNameResult extends BulkOperationResult {
+  merchant_ids: string[]
+}
+
+export interface BulkTagReplaceResult extends BulkOperationResult {
+  removed: number
+}
+
 // ── Accounts ──
 
 export interface AccountItem {

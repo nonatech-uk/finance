@@ -112,6 +112,52 @@ class LinkTransferRequest(BaseModel):
     counterpart_id: UUID
 
 
+# ── Bulk Operations ──────────────────────────────────────────────────────────
+
+
+class BulkCategoryUpdate(BaseModel):
+    """Bulk set category override on multiple transactions."""
+
+    transaction_ids: list[UUID]
+    category_path: str  # empty = remove override
+
+
+class BulkMerchantNameUpdate(BaseModel):
+    """Bulk update display_name for all canonical merchants of given transactions."""
+
+    transaction_ids: list[UUID]
+    display_name: str | None = None
+
+
+class BulkTagAdd(BaseModel):
+    """Add tag(s) to multiple transactions."""
+
+    transaction_ids: list[UUID]
+    tags: list[str]
+
+
+class BulkTagRemove(BaseModel):
+    """Remove a single tag from multiple transactions."""
+
+    transaction_ids: list[UUID]
+    tag: str
+
+
+class BulkTagReplace(BaseModel):
+    """Replace all tags on selected transactions with a new set."""
+
+    transaction_ids: list[UUID]
+    tags: list[str]  # empty = delete all
+
+
+class BulkNoteUpdate(BaseModel):
+    """Bulk set or append notes on multiple transactions."""
+
+    transaction_ids: list[UUID]
+    note: str
+    mode: str = "replace"  # "replace" or "append"
+
+
 # ── Accounts ──────────────────────────────────────────────────────────────────
 
 

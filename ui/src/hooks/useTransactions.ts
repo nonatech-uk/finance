@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { fetchTransactions, fetchTransaction, updateTransactionNote, updateTransactionCategory, linkTransfer, unlinkEvent, addTransactionTag, removeTransactionTag, fetchAllTags, type TransactionFilters } from '../api/transactions'
+import { fetchTransactions, fetchTransaction, updateTransactionNote, updateTransactionCategory, linkTransfer, unlinkEvent, addTransactionTag, removeTransactionTag, fetchAllTags, bulkUpdateCategory, bulkUpdateMerchantName, bulkAddTags, bulkRemoveTag, bulkReplaceTags, bulkUpdateNote, type TransactionFilters } from '../api/transactions'
 
 export function useTransactions(filters: Omit<TransactionFilters, 'cursor'>) {
   return useInfiniteQuery({
@@ -96,6 +96,84 @@ export function useRemoveTag() {
       queryClient.invalidateQueries({ queryKey: ['transaction', variables.id] })
       queryClient.invalidateQueries({ queryKey: ['transactions'] })
       queryClient.invalidateQueries({ queryKey: ['tags'] })
+    },
+  })
+}
+
+// ── Bulk Operations ──
+
+export function useBulkUpdateCategory() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ ids, categoryPath }: { ids: string[]; categoryPath: string }) =>
+      bulkUpdateCategory(ids, categoryPath),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['transaction'] })
+    },
+  })
+}
+
+export function useBulkUpdateMerchantName() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ ids, displayName }: { ids: string[]; displayName: string | null }) =>
+      bulkUpdateMerchantName(ids, displayName),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['transaction'] })
+      queryClient.invalidateQueries({ queryKey: ['merchants'] })
+    },
+  })
+}
+
+export function useBulkAddTags() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ ids, tags }: { ids: string[]; tags: string[] }) =>
+      bulkAddTags(ids, tags),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['transaction'] })
+      queryClient.invalidateQueries({ queryKey: ['tags'] })
+    },
+  })
+}
+
+export function useBulkRemoveTag() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ ids, tag }: { ids: string[]; tag: string }) =>
+      bulkRemoveTag(ids, tag),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['transaction'] })
+      queryClient.invalidateQueries({ queryKey: ['tags'] })
+    },
+  })
+}
+
+export function useBulkReplaceTags() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ ids, tags }: { ids: string[]; tags: string[] }) =>
+      bulkReplaceTags(ids, tags),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['transaction'] })
+      queryClient.invalidateQueries({ queryKey: ['tags'] })
+    },
+  })
+}
+
+export function useBulkUpdateNote() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ ids, note, mode }: { ids: string[]; note: string; mode: 'replace' | 'append' }) =>
+      bulkUpdateNote(ids, note, mode),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['transaction'] })
     },
   })
 }

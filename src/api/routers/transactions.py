@@ -8,6 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.api.deps import get_conn
 from src.api.models import (
+    BulkCategoryUpdate,
+    BulkMerchantNameUpdate,
+    BulkNoteUpdate,
+    BulkTagAdd,
+    BulkTagRemove,
+    BulkTagReplace,
     CategoryUpdate,
     DedupGroupInfo,
     DedupMember,
@@ -557,3 +563,192 @@ def remove_tag(
 
     conn.commit()
     return {"ok": True}
+
+
+# ── Bulk Operations ──────────────────────────────────────────────────────────
+
+
+@router.post("/transactions/bulk/category")
+def bulk_update_category(body: BulkCategoryUpdate, conn=Depends(get_conn)):
+    """Bulk set or remove category override on multiple transactions."""
+    cur = conn.cursor()
+    ids = [str(tid) for tid in body.transaction_ids]
+    if not ids:
+        return {"ok": True, "affected": 0}
+
+    category_path = body.category_path.strip()
+
+    if not category_path:
+        # Remove overrides
+        cur.execute("""
+            DELETE FROM transaction_category_override
+            WHERE raw_transaction_id = ANY(%s::uuid[])
+        """, (ids,))
+        affected = cur.rowcount
+    else:
+        # Validate category exists
+        cur.execute("SELECT 1 FROM category WHERE full_path = %s", (category_path,))
+        if not cur.fetchone():
+            raise HTTPException(400, f"Category not found: {category_path}")
+
+        # Upsert overrides
+        cur.execute("""
+            INSERT INTO transaction_category_override (raw_transaction_id, category_path, source)
+            SELECT unnest(%s::uuid[]), %s, 'user'
+            ON CONFLICT (raw_transaction_id)
+            DO UPDATE SET category_path = EXCLUDED.category_path,
+                          source = 'user', updated_at = now()
+        """, (ids, category_path))
+        affected = cur.rowcount
+
+    conn.commit()
+    return {"ok": True, "affected": affected}
+
+
+@router.post("/transactions/bulk/merchant-name")
+def bulk_update_merchant_name(body: BulkMerchantNameUpdate, conn=Depends(get_conn)):
+    """Bulk update display_name for all canonical merchants of given transactions."""
+    cur = conn.cursor()
+    ids = [str(tid) for tid in body.transaction_ids]
+    if not ids:
+        return {"ok": True, "affected": 0, "merchant_ids": []}
+
+    # Find distinct canonical_merchant IDs for these transactions
+    cur.execute("""
+        SELECT DISTINCT cm.id
+        FROM raw_transaction rt
+        JOIN cleaned_transaction ct ON ct.raw_transaction_id = rt.id
+        JOIN merchant_raw_mapping mrm ON mrm.cleaned_merchant = ct.cleaned_merchant
+        JOIN canonical_merchant cm ON cm.id = mrm.canonical_merchant_id
+        WHERE rt.id = ANY(%s::uuid[])
+          AND cm.merged_into_id IS NULL
+    """, (ids,))
+    merchant_ids = [str(r[0]) for r in cur.fetchall()]
+
+    if not merchant_ids:
+        return {"ok": True, "affected": 0, "merchant_ids": []}
+
+    cur.execute("""
+        UPDATE canonical_merchant
+        SET display_name = %s
+        WHERE id = ANY(%s::uuid[])
+    """, (body.display_name, merchant_ids))
+    affected = cur.rowcount
+
+    conn.commit()
+    return {"ok": True, "affected": affected, "merchant_ids": merchant_ids}
+
+
+@router.post("/transactions/bulk/tags/add")
+def bulk_add_tags(body: BulkTagAdd, conn=Depends(get_conn)):
+    """Add tag(s) to multiple transactions."""
+    cur = conn.cursor()
+    ids = [str(tid) for tid in body.transaction_ids]
+    tags = [t.strip() for t in body.tags if t.strip()]
+    if not ids or not tags:
+        return {"ok": True, "affected": 0}
+
+    cur.execute("""
+        INSERT INTO transaction_tag (raw_transaction_id, tag, source)
+        SELECT t_id, t_tag, 'user'
+        FROM unnest(%s::uuid[]) AS t_id
+        CROSS JOIN unnest(%s::text[]) AS t_tag
+        ON CONFLICT (raw_transaction_id, tag) DO NOTHING
+    """, (ids, tags))
+    affected = cur.rowcount
+
+    conn.commit()
+    return {"ok": True, "affected": affected}
+
+
+@router.post("/transactions/bulk/tags/remove")
+def bulk_remove_tag(body: BulkTagRemove, conn=Depends(get_conn)):
+    """Remove a single tag from multiple transactions."""
+    cur = conn.cursor()
+    ids = [str(tid) for tid in body.transaction_ids]
+    tag = body.tag.strip()
+    if not ids or not tag:
+        return {"ok": True, "affected": 0}
+
+    cur.execute("""
+        DELETE FROM transaction_tag
+        WHERE raw_transaction_id = ANY(%s::uuid[]) AND tag = %s
+    """, (ids, tag))
+    affected = cur.rowcount
+
+    conn.commit()
+    return {"ok": True, "affected": affected}
+
+
+@router.post("/transactions/bulk/tags/replace")
+def bulk_replace_tags(body: BulkTagReplace, conn=Depends(get_conn)):
+    """Replace all tags on selected transactions with a new set."""
+    cur = conn.cursor()
+    ids = [str(tid) for tid in body.transaction_ids]
+    tags = [t.strip() for t in body.tags if t.strip()]
+    if not ids:
+        return {"ok": True, "affected": 0, "removed": 0}
+
+    # Delete all existing tags
+    cur.execute("""
+        DELETE FROM transaction_tag
+        WHERE raw_transaction_id = ANY(%s::uuid[])
+    """, (ids,))
+    removed = cur.rowcount
+
+    added = 0
+    if tags:
+        cur.execute("""
+            INSERT INTO transaction_tag (raw_transaction_id, tag, source)
+            SELECT t_id, t_tag, 'user'
+            FROM unnest(%s::uuid[]) AS t_id
+            CROSS JOIN unnest(%s::text[]) AS t_tag
+            ON CONFLICT (raw_transaction_id, tag) DO NOTHING
+        """, (ids, tags))
+        added = cur.rowcount
+
+    conn.commit()
+    return {"ok": True, "affected": added, "removed": removed}
+
+
+@router.post("/transactions/bulk/note")
+def bulk_update_note(body: BulkNoteUpdate, conn=Depends(get_conn)):
+    """Bulk set or append notes on multiple transactions."""
+    cur = conn.cursor()
+    ids = [str(tid) for tid in body.transaction_ids]
+    note_text = body.note.strip()
+    mode = body.mode  # "replace" or "append"
+
+    if not ids:
+        return {"ok": True, "affected": 0}
+
+    if not note_text and mode == "replace":
+        # Delete notes
+        cur.execute("""
+            DELETE FROM transaction_note
+            WHERE raw_transaction_id = ANY(%s::uuid[])
+        """, (ids,))
+        affected = cur.rowcount
+    elif mode == "append":
+        # Append: for existing notes, concat with newline; for missing, insert
+        cur.execute("""
+            INSERT INTO transaction_note (raw_transaction_id, note, source)
+            SELECT unnest(%s::uuid[]), %s, 'user'
+            ON CONFLICT (raw_transaction_id)
+            DO UPDATE SET note = transaction_note.note || E'\n' || EXCLUDED.note,
+                          source = 'user', updated_at = now()
+        """, (ids, note_text))
+        affected = cur.rowcount
+    else:
+        # Replace
+        cur.execute("""
+            INSERT INTO transaction_note (raw_transaction_id, note, source)
+            SELECT unnest(%s::uuid[]), %s, 'user'
+            ON CONFLICT (raw_transaction_id)
+            DO UPDATE SET note = EXCLUDED.note,
+                          source = 'user', updated_at = now()
+        """, (ids, note_text))
+        affected = cur.rowcount
+
+    conn.commit()
+    return {"ok": True, "affected": affected}

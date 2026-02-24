@@ -1,5 +1,5 @@
 import { apiFetch } from './client'
-import type { TransactionList, TransactionDetail } from './types'
+import type { TransactionList, TransactionDetail, BulkOperationResult, BulkMerchantNameResult, BulkTagReplaceResult } from './types'
 
 export interface TransactionFilters {
   cursor?: string
@@ -77,4 +77,54 @@ export function removeTransactionTag(id: string, tagName: string) {
 
 export function fetchAllTags() {
   return apiFetch<{ items: { tag: string; count: number }[] }>('/tags')
+}
+
+// ── Bulk Operations ──
+
+export function bulkUpdateCategory(transactionIds: string[], categoryPath: string) {
+  return apiFetch<BulkOperationResult>('/transactions/bulk/category', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transaction_ids: transactionIds, category_path: categoryPath }),
+  })
+}
+
+export function bulkUpdateMerchantName(transactionIds: string[], displayName: string | null) {
+  return apiFetch<BulkMerchantNameResult>('/transactions/bulk/merchant-name', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transaction_ids: transactionIds, display_name: displayName }),
+  })
+}
+
+export function bulkAddTags(transactionIds: string[], tags: string[]) {
+  return apiFetch<BulkOperationResult>('/transactions/bulk/tags/add', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transaction_ids: transactionIds, tags }),
+  })
+}
+
+export function bulkRemoveTag(transactionIds: string[], tag: string) {
+  return apiFetch<BulkOperationResult>('/transactions/bulk/tags/remove', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transaction_ids: transactionIds, tag }),
+  })
+}
+
+export function bulkReplaceTags(transactionIds: string[], tags: string[]) {
+  return apiFetch<BulkTagReplaceResult>('/transactions/bulk/tags/replace', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transaction_ids: transactionIds, tags }),
+  })
+}
+
+export function bulkUpdateNote(transactionIds: string[], note: string, mode: 'replace' | 'append') {
+  return apiFetch<BulkOperationResult>('/transactions/bulk/note', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transaction_ids: transactionIds, note, mode }),
+  })
 }
