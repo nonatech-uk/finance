@@ -1,9 +1,10 @@
 import { apiFetch } from './client'
-import type { MerchantList } from './types'
+import type { MerchantList, MerchantDetail, CategorySuggestionList, DisplayRuleList, DisplayRule } from './types'
 
 export interface MerchantFilters {
   search?: string
   unmapped?: boolean
+  has_suggestions?: boolean
   cursor?: string
   limit?: number
 }
@@ -18,9 +19,67 @@ export function fetchMerchants(filters: MerchantFilters = {}) {
   return apiFetch<MerchantList>(`/merchants${qs ? '?' + qs : ''}`)
 }
 
+export function fetchMerchantDetail(id: string) {
+  return apiFetch<MerchantDetail>(`/merchants/${id}`)
+}
+
 export function updateMerchantMapping(id: string, categoryHint: string | null) {
   return apiFetch<{ id: string; name: string; category_hint: string | null; updated: boolean }>(
     `/merchants/${id}/mapping`,
     { method: 'PUT', body: JSON.stringify({ category_hint: categoryHint }) }
   )
+}
+
+export function updateMerchantName(id: string, displayName: string | null) {
+  return apiFetch<{ id: string; display_name: string | null; updated: boolean }>(
+    `/merchants/${id}/name`,
+    { method: 'PUT', body: JSON.stringify({ display_name: displayName }) }
+  )
+}
+
+export function mergeMerchant(survivingId: string, mergeFromId: string) {
+  return apiFetch<{ surviving_id: string; merged_from_id: string; mappings_moved: number }>(
+    `/merchants/${survivingId}/merge`,
+    { method: 'POST', body: JSON.stringify({ merge_from_id: mergeFromId }) }
+  )
+}
+
+export function fetchSuggestions(status = 'pending', limit = 50) {
+  return apiFetch<CategorySuggestionList>(`/merchants/suggestions?status=${status}&limit=${limit}`)
+}
+
+export function reviewSuggestion(id: number, status: 'accepted' | 'rejected') {
+  return apiFetch<{ id: number; status: string; applied: boolean }>(
+    `/merchants/suggestions/${id}`,
+    { method: 'PUT', body: JSON.stringify({ status }) }
+  )
+}
+
+export function runCategorisation(includeLlm = false) {
+  return apiFetch<{
+    display_names_set: number
+    rules_merchants_merged: number
+    rules_merchants_renamed: number
+    source_hint_suggestions: number
+    auto_accepted: number
+    queued_for_review: number
+    llm_queued: number
+  }>(`/categorisation/run?include_llm=${includeLlm}`, { method: 'POST' })
+}
+
+// ── Display Rules ──
+
+export function fetchRules() {
+  return apiFetch<DisplayRuleList>('/merchants/rules')
+}
+
+export function createRule(rule: Omit<DisplayRule, 'id'>) {
+  return apiFetch<DisplayRule>('/merchants/rules', {
+    method: 'POST',
+    body: JSON.stringify(rule),
+  })
+}
+
+export function deleteRule(id: number) {
+  return apiFetch<{ id: number; deleted: boolean }>(`/merchants/rules/${id}`, { method: 'DELETE' })
 }

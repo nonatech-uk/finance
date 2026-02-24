@@ -17,6 +17,8 @@ export interface TransactionItem {
   category_path: string | null
   category_name: string | null
   category_type: string | null
+  category_is_override: boolean
+  note: string | null
 }
 
 export interface TransactionList {
@@ -55,6 +57,8 @@ export interface EconomicEventInfo {
 
 export interface TransactionDetail extends TransactionItem {
   raw_data: Record<string, unknown> | null
+  note: string | null
+  note_source: string | null
   dedup_group: DedupGroupInfo | null
   economic_event: EconomicEventInfo | null
 }
@@ -111,7 +115,10 @@ export interface AccountDetailResponse {
 export interface MerchantItem {
   id: string
   name: string
+  display_name: string | null
   category_hint: string | null
+  category_method: string | null
+  category_confidence: string | null
   mapping_count: number
 }
 
@@ -119,6 +126,60 @@ export interface MerchantList {
   items: MerchantItem[]
   next_cursor: string | null
   has_more: boolean
+}
+
+export interface MerchantTransaction {
+  id: string
+  posted_at: string
+  amount: string
+  currency: string
+  raw_merchant: string | null
+  source: string
+  institution: string
+  account_ref: string
+}
+
+export interface MerchantDetail {
+  id: string
+  name: string
+  display_name: string | null
+  category_hint: string | null
+  category_method: string | null
+  category_confidence: string | null
+  mapping_count: number
+  aliases: string[]
+  recent_transactions: MerchantTransaction[]
+}
+
+export interface DisplayRule {
+  id: number
+  pattern: string
+  display_name: string
+  merge_group: boolean
+  category_hint: string | null
+  priority: number
+}
+
+export interface DisplayRuleList {
+  items: DisplayRule[]
+}
+
+export interface CategorySuggestionItem {
+  id: number
+  canonical_merchant_id: string
+  merchant_name: string
+  suggested_category_id: string
+  suggested_category_path: string
+  method: string
+  confidence: string
+  reasoning: string | null
+  status: string
+  created_at: string
+}
+
+export interface CategorySuggestionList {
+  items: CategorySuggestionItem[]
+  total: number
 }
 
 // ── Categories ──
@@ -168,6 +229,12 @@ export interface MonthlyReport {
   currency: string
 }
 
+export interface AccountOption {
+  institution: string
+  account_ref: string
+  label: string
+}
+
 export interface OverviewStats {
   total_accounts: number
   active_accounts: number
@@ -176,7 +243,7 @@ export interface OverviewStats {
   dedup_groups: number
   removed_by_dedup: number
   category_coverage_pct: string
-  institutions: string[]
+  accounts: AccountOption[]
   date_range_from: string | null
   date_range_to: string | null
 }

@@ -1,16 +1,18 @@
-import { useState, useMemo, useCallback, useEffect } from 'react'
-import { useTransactions, useTransaction } from '../hooks/useTransactions'
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
+import { useTransactions, useTransaction, useUpdateNote, useUpdateTransactionCategory, useLinkTransfer, useUnlinkEvent } from '../hooks/useTransactions'
+import { useUpdateMerchantName } from '../hooks/useMerchants'
+import { useCategories } from '../hooks/useCategories'
 import { useOverview } from '../hooks/useStats'
 import CurrencyAmount from '../components/common/CurrencyAmount'
 import Badge from '../components/common/Badge'
 import LoadingSpinner from '../components/common/LoadingSpinner'
 import JsonViewer from '../components/common/JsonViewer'
-import type { TransactionItem } from '../api/types'
+import type { TransactionItem, TransactionDetail, CategoryItem } from '../api/types'
 
 export default function Transactions() {
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [institution, setInstitution] = useState('')
+  const [account, setAccount] = useState('')  // "institution/account_ref" or ""
   const [currency, setCurrency] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -24,14 +26,21 @@ export default function Transactions() {
     return () => clearTimeout(t)
   }, [search])
 
+  const [filterInstitution, filterAccountRef] = useMemo(() => {
+    if (!account) return [undefined, undefined]
+    const [inst, ...rest] = account.split('/')
+    return [inst, rest.join('/')]
+  }, [account])
+
   const filters = useMemo(() => ({
     limit: 100,
     search: debouncedSearch || undefined,
-    institution: institution || undefined,
+    institution: filterInstitution,
+    account_ref: filterAccountRef,
     currency: currency || undefined,
     date_from: dateFrom || undefined,
     date_to: dateTo || undefined,
-  }), [debouncedSearch, institution, currency, dateFrom, dateTo])
+  }), [debouncedSearch, filterInstitution, filterAccountRef, currency, dateFrom, dateTo])
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useTransactions(filters)
   const { data: detail, isLoading: detailLoading } = useTransaction(selectedId)
@@ -43,7 +52,7 @@ export default function Transactions() {
 
   const clearFilters = useCallback(() => {
     setSearch('')
-    setInstitution('')
+    setAccount('')
     setCurrency('')
     setDateFrom('')
     setDateTo('')
@@ -59,19 +68,19 @@ export default function Transactions() {
         <div className="flex flex-wrap gap-3 mb-4">
           <input
             type="text"
-            placeholder="Search merchants..."
+            placeholder="Search merchants, notes, amounts..."
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="bg-bg-card border border-border rounded-md px-3 py-1.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent w-56"
           />
           <select
-            value={institution}
-            onChange={e => setInstitution(e.target.value)}
+            value={account}
+            onChange={e => setAccount(e.target.value)}
             className="bg-bg-card border border-border rounded-md px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent"
           >
-            <option value="">All institutions</option>
-            {overview?.institutions.map(i => (
-              <option key={i} value={i}>{i}</option>
+            <option value="">All accounts</option>
+            {overview?.accounts.map(a => (
+              <option key={`${a.institution}/${a.account_ref}`} value={`${a.institution}/${a.account_ref}`}>{a.label}</option>
             ))}
           </select>
           <select
@@ -145,11 +154,20 @@ function TransactionRow({ txn, isSelected, onClick }: { txn: TransactionItem; is
     >
       <td className="py-2 pr-4 whitespace-nowrap text-text-secondary">{txn.posted_at}</td>
       <td className="py-2 pr-4">
-        <div className="truncate max-w-[300px]">{txn.canonical_merchant_name || txn.cleaned_merchant || txn.raw_merchant || '—'}</div>
+        <div className="truncate max-w-[300px] flex items-center gap-1.5">
+          <span className="truncate">{txn.canonical_merchant_name || txn.cleaned_merchant || txn.raw_merchant || '—'}</span>
+          {txn.note && (
+            <span className="flex-shrink-0" title={txn.note}>
+              <svg className="w-3.5 h-3.5 text-text-secondary opacity-50" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M2 3.5A1.5 1.5 0 013.5 2h9A1.5 1.5 0 0114 3.5v9a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12.5v-9zM4 5h8v1H4V5zm0 2.5h8v1H4v-1zM4 10h5v1H4v-1z"/>
+              </svg>
+            </span>
+          )}
+        </div>
       </td>
       <td className="py-2 pr-4">
         {txn.category_name ? (
-          <Badge variant="accent">{txn.category_name}</Badge>
+          <span title={txn.category_path || undefined}><Badge variant="accent">{txn.category_name}</Badge></span>
         ) : (
           <span className="text-text-secondary text-xs">—</span>
         )}
@@ -180,17 +198,8 @@ function TransactionDetailContent({ detail }: { detail: import('../api/types').T
         </div>
       </section>
 
-      {/* Merchant chain */}
-      <section>
-        <h4 className="text-xs uppercase text-text-secondary mb-2">Merchant</h4>
-        <div className="space-y-1">
-          <div><span className="text-text-secondary">Raw:</span> {detail.raw_merchant || '—'}</div>
-          <div><span className="text-text-secondary">Cleaned:</span> {detail.cleaned_merchant || '—'}</div>
-          <div><span className="text-text-secondary">Canonical:</span> {detail.canonical_merchant_name || '—'}</div>
-          <div><span className="text-text-secondary">Match:</span> {detail.merchant_match_type || '—'}</div>
-          <div><span className="text-text-secondary">Category:</span> {detail.category_path || '—'}</div>
-        </div>
-      </section>
+      {/* Merchant + Category */}
+      <MerchantSection detail={detail} />
 
       {detail.raw_memo && (
         <section>
@@ -198,6 +207,9 @@ function TransactionDetailContent({ detail }: { detail: import('../api/types').T
           <div>{detail.raw_memo}</div>
         </section>
       )}
+
+      {/* Note */}
+      <NoteSection transactionId={detail.id} note={detail.note} noteSource={detail.note_source} />
 
       {/* Dedup group */}
       {detail.dedup_group && (
@@ -218,24 +230,8 @@ function TransactionDetailContent({ detail }: { detail: import('../api/types').T
         </section>
       )}
 
-      {/* Economic event */}
-      {detail.economic_event && (
-        <section>
-          <h4 className="text-xs uppercase text-text-secondary mb-2">Economic Event</h4>
-          <div className="mb-2">
-            <span className="text-text-secondary">Type:</span> {detail.economic_event.event_type}
-            {detail.economic_event.description && <span> · {detail.economic_event.description}</span>}
-          </div>
-          <div className="space-y-1">
-            {detail.economic_event.legs.map((leg, i) => (
-              <div key={i} className="flex gap-3 text-text-secondary">
-                <Badge>{leg.leg_type}</Badge>
-                <CurrencyAmount amount={leg.amount} currency={leg.currency} />
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+      {/* Economic event / Transfer linking */}
+      <TransferSection detail={detail} />
 
       {/* Raw data */}
       {detail.raw_data && (
@@ -247,5 +243,321 @@ function TransactionDetailContent({ detail }: { detail: import('../api/types').T
         </section>
       )}
     </div>
+  )
+}
+
+function flattenCategories(items: CategoryItem[], prefix = ''): { path: string; name: string }[] {
+  const result: { path: string; name: string }[] = []
+  for (const cat of items) {
+    result.push({ path: cat.full_path, name: prefix ? `${prefix} > ${cat.name}` : cat.name })
+    if (cat.children.length > 0) {
+      result.push(...flattenCategories(cat.children, cat.full_path))
+    }
+  }
+  return result
+}
+
+function MerchantSection({ detail }: { detail: TransactionDetail }) {
+  const [displayName, setDisplayName] = useState(detail.canonical_merchant_name || '')
+  const [editingName, setEditingName] = useState(false)
+  const nameMutation = useUpdateMerchantName()
+  const categoryMutation = useUpdateTransactionCategory()
+  const { data: categoryTree } = useCategories()
+
+  const categoryOptions = useMemo(() => {
+    if (!categoryTree) return []
+    return flattenCategories(categoryTree.items)
+  }, [categoryTree])
+
+  // Reset display name when detail changes
+  useEffect(() => {
+    if (!editingName) setDisplayName(detail.canonical_merchant_name || '')
+  }, [detail.canonical_merchant_id, editingName])
+
+  const handleNameSave = () => {
+    if (!detail.canonical_merchant_id) return
+    nameMutation.mutate(
+      { id: detail.canonical_merchant_id, displayName: displayName.trim() || null },
+      { onSuccess: () => setEditingName(false) },
+    )
+  }
+
+  const handleCategoryChange = (path: string) => {
+    categoryMutation.mutate({ id: detail.id, categoryPath: path })
+  }
+
+  return (
+    <section>
+      <h4 className="text-xs uppercase text-text-secondary mb-2">Merchant</h4>
+      <div className="space-y-3">
+        {/* Display name (editable if canonical merchant exists) */}
+        {detail.canonical_merchant_id ? (
+          <div>
+            <label className="text-text-secondary text-xs block mb-1">Display Name</label>
+            {editingName ? (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={displayName}
+                  onChange={e => setDisplayName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleNameSave(); if (e.key === 'Escape') { setDisplayName(detail.canonical_merchant_name || ''); setEditingName(false) } }}
+                  placeholder="Set a display name..."
+                  className="flex-1 bg-bg-primary border border-border rounded px-2 py-1 text-sm text-text-primary focus:outline-none focus:border-accent"
+                  autoFocus
+                />
+                <button
+                  onClick={handleNameSave}
+                  disabled={nameMutation.isPending}
+                  className="px-3 py-1 text-xs bg-accent/20 text-accent rounded hover:bg-accent/30 disabled:opacity-50"
+                >
+                  {nameMutation.isPending ? '...' : 'Save'}
+                </button>
+                <button
+                  onClick={() => { setDisplayName(detail.canonical_merchant_name || ''); setEditingName(false) }}
+                  className="text-xs text-text-secondary hover:text-text-primary"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span>{detail.canonical_merchant_name || '—'}</span>
+                <button
+                  onClick={() => setEditingName(true)}
+                  className="text-text-secondary hover:text-accent text-xs ml-auto"
+                >
+                  Edit
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-text-secondary text-xs italic">No merchant linked</div>
+        )}
+
+        {/* Category (transaction-level override) */}
+        <div>
+          <label className="text-text-secondary text-xs block mb-1">
+            Category
+            {detail.category_is_override && (
+              <span className="ml-1.5 text-[10px] bg-accent/20 text-accent px-1.5 py-0.5 rounded">override</span>
+            )}
+          </label>
+          <select
+            value={detail.category_path || ''}
+            onChange={e => handleCategoryChange(e.target.value)}
+            disabled={categoryMutation.isPending}
+            className="w-full bg-bg-primary border border-border rounded px-2 py-1 text-sm text-text-primary focus:outline-none focus:border-accent disabled:opacity-50"
+          >
+            <option value="">-- None --</option>
+            {categoryOptions.map(opt => (
+              <option key={opt.path} value={opt.path}>{opt.path}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Raw details */}
+        <div className="text-xs text-text-secondary space-y-0.5 pt-1 border-t border-border/50">
+          <div>Raw: {detail.raw_merchant || '—'}</div>
+          <div>Cleaned: {detail.cleaned_merchant || '—'}</div>
+          <div>Match: {detail.merchant_match_type || '—'}</div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function TransferSection({ detail }: { detail: TransactionDetail }) {
+  const [linking, setLinking] = useState(false)
+  const [counterpartId, setCounterpartId] = useState('')
+  const linkMutation = useLinkTransfer()
+  const unlinkMutation = useUnlinkEvent()
+
+  const handleLink = () => {
+    const id = counterpartId.trim()
+    if (!id) return
+    linkMutation.mutate(
+      { id: detail.id, counterpartId: id },
+      { onSuccess: () => { setLinking(false); setCounterpartId('') } },
+    )
+  }
+
+  const handleUnlink = () => {
+    if (!detail.economic_event) return
+    unlinkMutation.mutate({ eventId: detail.economic_event.event_id })
+  }
+
+  if (detail.economic_event) {
+    return (
+      <section>
+        <div className="flex items-center gap-2 mb-2">
+          <h4 className="text-xs uppercase text-text-secondary">Transfer</h4>
+          <button
+            onClick={handleUnlink}
+            disabled={unlinkMutation.isPending}
+            className="text-text-secondary hover:text-red-400 text-xs ml-auto disabled:opacity-50"
+          >
+            {unlinkMutation.isPending ? '...' : 'Unlink'}
+          </button>
+        </div>
+        <div className="mb-2">
+          <Badge variant="accent">{detail.economic_event.event_type.replace(/_/g, ' ')}</Badge>
+          {detail.economic_event.description && (
+            <span className="ml-2 text-text-secondary text-xs">{detail.economic_event.description}</span>
+          )}
+        </div>
+        <div className="space-y-1">
+          {detail.economic_event.legs.map((leg, i) => (
+            <div key={i} className="flex gap-3 text-text-secondary">
+              <Badge>{leg.leg_type}</Badge>
+              <CurrencyAmount amount={leg.amount} currency={leg.currency} />
+            </div>
+          ))}
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-2">
+        <h4 className="text-xs uppercase text-text-secondary">Transfer</h4>
+        {!linking && (
+          <button
+            onClick={() => setLinking(true)}
+            className="text-text-secondary hover:text-accent text-xs ml-auto"
+          >
+            + Link as transfer
+          </button>
+        )}
+      </div>
+      {linking ? (
+        <div className="space-y-2">
+          <input
+            type="text"
+            value={counterpartId}
+            onChange={e => setCounterpartId(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleLink(); if (e.key === 'Escape') { setLinking(false); setCounterpartId('') } }}
+            placeholder="Counterpart transaction ID..."
+            className="w-full bg-bg-primary border border-border rounded-md px-3 py-1.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent font-mono"
+            autoFocus
+          />
+          {linkMutation.isError && (
+            <div className="text-red-400 text-xs">{(linkMutation.error as Error).message || 'Failed to link'}</div>
+          )}
+          <div className="flex gap-2">
+            <button
+              onClick={handleLink}
+              disabled={linkMutation.isPending || !counterpartId.trim()}
+              className="text-xs px-3 py-1 bg-accent text-white rounded-md hover:bg-accent-hover disabled:opacity-50"
+            >
+              {linkMutation.isPending ? 'Linking...' : 'Link'}
+            </button>
+            <button
+              onClick={() => { setLinking(false); setCounterpartId('') }}
+              className="text-xs px-3 py-1 text-text-secondary hover:text-text-primary"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="text-text-secondary text-xs italic">No linked transfer</div>
+      )}
+    </section>
+  )
+}
+
+function NoteSection({ transactionId, note, noteSource }: { transactionId: string; note: string | null; noteSource: string | null }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(note || '')
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const updateNote = useUpdateNote()
+
+  // Reset draft when note changes (e.g. after save)
+  useEffect(() => {
+    if (!editing) setDraft(note || '')
+  }, [note, editing])
+
+  // Focus textarea when entering edit mode
+  useEffect(() => {
+    if (editing && textareaRef.current) {
+      textareaRef.current.focus()
+      textareaRef.current.selectionStart = textareaRef.current.value.length
+    }
+  }, [editing])
+
+  const handleSave = () => {
+    updateNote.mutate({ id: transactionId, note: draft }, {
+      onSuccess: () => setEditing(false),
+    })
+  }
+
+  const handleCancel = () => {
+    setDraft(note || '')
+    setEditing(false)
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && e.metaKey) {
+      e.preventDefault()
+      handleSave()
+    }
+    if (e.key === 'Escape') {
+      handleCancel()
+    }
+  }
+
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-2">
+        <h4 className="text-xs uppercase text-text-secondary">Note</h4>
+        {noteSource === 'ibank_import' && (
+          <span className="text-[10px] text-text-secondary bg-bg-primary px-1.5 py-0.5 rounded">iBank</span>
+        )}
+        {!editing && (
+          <button
+            onClick={() => setEditing(true)}
+            className="text-text-secondary hover:text-accent text-xs ml-auto"
+          >
+            {note ? 'Edit' : '+ Add note'}
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="space-y-2">
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={handleKeyDown}
+            rows={3}
+            className="w-full bg-bg-primary border border-border rounded-md px-3 py-2 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent resize-y"
+            placeholder="Add a note..."
+          />
+          <div className="flex gap-2 items-center">
+            <button
+              onClick={handleSave}
+              disabled={updateNote.isPending}
+              className="text-xs px-3 py-1 bg-accent text-white rounded-md hover:bg-accent-hover disabled:opacity-50"
+            >
+              {updateNote.isPending ? 'Saving...' : 'Save'}
+            </button>
+            <button
+              onClick={handleCancel}
+              className="text-xs px-3 py-1 text-text-secondary hover:text-text-primary"
+            >
+              Cancel
+            </button>
+            <span className="text-[10px] text-text-secondary ml-auto">Cmd+Enter to save</span>
+          </div>
+        </div>
+      ) : note ? (
+        <div className="text-text-primary whitespace-pre-wrap">{note}</div>
+      ) : (
+        <div className="text-text-secondary text-xs italic">No note</div>
+      )}
+    </section>
   )
 }

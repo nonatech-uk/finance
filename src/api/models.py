@@ -1,6 +1,6 @@
 """Pydantic response models for the Finance API."""
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -31,6 +31,8 @@ class TransactionItem(BaseModel):
     category_path: str | None = None
     category_name: str | None = None
     category_type: str | None = None
+    category_is_override: bool = False
+    note: str | None = None
 
 
 class TransactionList(BaseModel):
@@ -71,8 +73,28 @@ class TransactionDetail(TransactionItem):
     """Full transaction detail including dedup and economic event info."""
 
     raw_data: dict | None = None
+    note: str | None = None
+    note_source: str | None = None
     dedup_group: DedupGroupInfo | None = None
     economic_event: EconomicEventInfo | None = None
+
+
+class NoteUpdate(BaseModel):
+    """Request body for updating a transaction note."""
+
+    note: str
+
+
+class CategoryUpdate(BaseModel):
+    """Request body for updating a transaction category override."""
+
+    category_path: str
+
+
+class LinkTransferRequest(BaseModel):
+    """Request body for linking two transactions as a transfer."""
+
+    counterpart_id: UUID
 
 
 # ── Accounts ──────────────────────────────────────────────────────────────────
@@ -112,7 +134,10 @@ class AccountUpdate(BaseModel):
 class MerchantItem(BaseModel):
     id: UUID
     name: str
+    display_name: str | None = None
     category_hint: str | None = None
+    category_method: str | None = None
+    category_confidence: Decimal | None = None
     mapping_count: int = 0
 
 
@@ -122,10 +147,90 @@ class MerchantList(BaseModel):
     has_more: bool = False
 
 
+class MerchantTransaction(BaseModel):
+    id: UUID
+    posted_at: date
+    amount: Decimal
+    currency: str
+    raw_merchant: str | None = None
+    source: str
+    institution: str
+    account_ref: str
+
+
+class MerchantDetail(BaseModel):
+    id: UUID
+    name: str
+    display_name: str | None = None
+    category_hint: str | None = None
+    category_method: str | None = None
+    category_confidence: Decimal | None = None
+    mapping_count: int = 0
+    aliases: list[str] = []
+    recent_transactions: list[MerchantTransaction] = []
+
+
 class MerchantMappingUpdate(BaseModel):
     """Request body for updating a merchant's category hint."""
 
     category_hint: str | None = None
+
+
+class MerchantNameUpdate(BaseModel):
+    """Request body for updating a merchant's display name."""
+
+    display_name: str | None = None
+
+
+class MerchantMergeRequest(BaseModel):
+    """Request body to merge another merchant into this one."""
+
+    merge_from_id: UUID
+
+
+class CategorySuggestionItem(BaseModel):
+    id: int
+    canonical_merchant_id: UUID
+    merchant_name: str
+    suggested_category_id: UUID
+    suggested_category_path: str
+    method: str
+    confidence: Decimal
+    reasoning: str | None = None
+    status: str
+    created_at: datetime
+
+
+class CategorySuggestionList(BaseModel):
+    items: list[CategorySuggestionItem]
+    total: int = 0
+
+
+class SuggestionReview(BaseModel):
+    """Request body for accepting or rejecting a suggestion."""
+
+    status: str  # 'accepted' or 'rejected'
+
+
+class DisplayRuleItem(BaseModel):
+    id: int
+    pattern: str
+    display_name: str
+    merge_group: bool = True
+    category_hint: str | None = None
+    priority: int = 100
+
+
+class DisplayRuleList(BaseModel):
+    items: list[DisplayRuleItem]
+
+
+class DisplayRuleCreate(BaseModel):
+    pattern: str
+    display_name: str
+    merge_group: bool = True
+    category_hint: str | None = None
+    priority: int = 100
 
 
 # ── Categories ────────────────────────────────────────────────────────────────
@@ -177,6 +282,12 @@ class MonthlyReport(BaseModel):
     currency: str
 
 
+class AccountOption(BaseModel):
+    institution: str
+    account_ref: str
+    label: str
+
+
 class OverviewStats(BaseModel):
     total_accounts: int
     active_accounts: int
@@ -185,6 +296,6 @@ class OverviewStats(BaseModel):
     dedup_groups: int
     removed_by_dedup: int
     category_coverage_pct: Decimal
-    institutions: list[str]
+    accounts: list[AccountOption]
     date_range_from: date | None = None
     date_range_to: date | None = None

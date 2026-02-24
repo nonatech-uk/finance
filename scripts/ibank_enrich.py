@@ -46,7 +46,8 @@ def find_all_transactions(conn, *, institution=None):
             COALESCE(aa.canonical_ref, rt.account_ref) AS account_key,
             rt.posted_at, rt.amount, rt.currency,
             rt.raw_merchant,
-            rt.raw_data->>'ibank_category' AS ibank_category
+            rt.raw_data->>'ibank_category' AS ibank_category,
+            rt.raw_data->>'ibank_note' AS ibank_note
         FROM raw_transaction rt
         LEFT JOIN account_alias aa
             ON aa.institution = rt.institution
@@ -374,6 +375,50 @@ def run_enrichment(conn, *, dry_run=False, institution=None):
                         display_names_set += cur.rowcount
                     break
 
+    # --- Note transfer ---
+    print("\n  Transferring iBank notes...")
+
+    # Find which API/CSV transactions already have notes
+    cur.execute("SELECT raw_transaction_id FROM transaction_note")
+    existing_notes = {str(r[0]) for r in cur.fetchall()}
+
+    notes_set = 0
+    notes_skipped_exists = 0
+    notes_skipped_empty = 0
+    notes_skipped_echo = 0
+
+    for ib, ap in matches:
+        api_id = str(ap['id'])
+        ibank_note = (ib.get('ibank_note') or '').strip()
+
+        if not ibank_note:
+            notes_skipped_empty += 1
+            continue
+
+        if api_id in existing_notes:
+            notes_skipped_exists += 1
+            continue
+
+        # Skip notes that are just the merchant name echoed
+        ibank_merchant = (ib.get('raw_merchant') or '').strip()
+        if ibank_note.lower() == ibank_merchant.lower():
+            notes_skipped_echo += 1
+            continue
+
+        if dry_run:
+            if notes_set < 20:
+                print(f"    [note] {ib['posted_at']} {ib['amount']:>10} {ibank_note[:60]}")
+        else:
+            cur.execute("""
+                INSERT INTO transaction_note (raw_transaction_id, note, source)
+                VALUES (%s, %s, 'ibank_import')
+                ON CONFLICT (raw_transaction_id) DO NOTHING
+            """, (api_id, ibank_note))
+            notes_set += cur.rowcount
+
+        if dry_run:
+            notes_set += 1
+
     if not dry_run:
         conn.commit()
 
@@ -383,6 +428,10 @@ def run_enrichment(conn, *, dry_run=False, institution=None):
     print(f"    Skipped (has category):   {skipped_has_category}")
     print(f"    Skipped (no iBank cat):   {skipped_no_ibank_cat}")
     print(f"    Skipped (unmapped cat):   {skipped_unmapped_cat}")
+    print(f"    Notes transferred:        {notes_set}")
+    print(f"    Notes skipped (exists):   {notes_skipped_exists}")
+    print(f"    Notes skipped (empty):    {notes_skipped_empty}")
+    print(f"    Notes skipped (echo):     {notes_skipped_echo}")
 
     return {
         "matches": len(matches),

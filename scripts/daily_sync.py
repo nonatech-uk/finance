@@ -138,6 +138,21 @@ def run_dedup():
         conn.close()
 
 
+def run_categorisation():
+    """Run source-hint categorisation for newly matched merchants."""
+    from src.categorisation.engine import run_naming, run_source_hints
+
+    conn = psycopg2.connect(settings.dsn)
+    try:
+        naming_result = run_naming(conn)
+        hints_result = run_source_hints(conn)
+        print(f"  Names: {naming_result['display_names_set']} set, "
+              f"Hints: {hints_result['auto_accepted']} accepted, "
+              f"{hints_result['queued']} queued")
+    finally:
+        conn.close()
+
+
 def main():
     hc_monzo = os.environ.get("HEALTHCHECK_MONZO_URL")
     hc_wise = os.environ.get("HEALTHCHECK_WISE_URL")
@@ -185,8 +200,51 @@ def main():
         print(f"  ERROR in dedup: {e}")
         traceback.print_exc()
 
-    # Step 5: Healthcheck pings (only on source-level success)
-    print("\nStep 5: Healthcheck pings...")
+    # Step 5: Auto-categorisation (source hints only, no LLM)
+    print("\nStep 5: Auto-categorisation...")
+    try:
+        run_categorisation()
+        print("  Done.")
+    except Exception as e:
+        print(f"  ERROR in categorisation: {e}")
+        traceback.print_exc()
+
+    # Step 6: Link inter-account transfers and FX conversions
+    print("\nStep 6: Link transfers & FX events...")
+    try:
+        from scripts.link_fx_events import (
+            find_fx_pairs, find_same_ccy_pairs, find_visa_payment_pairs,
+            find_already_linked, link_fx_pairs, link_same_ccy_pairs,
+            link_visa_payment_pairs,
+        )
+        conn = psycopg2.connect(settings.dsn)
+        try:
+            cur = conn.cursor()
+            already_linked = find_already_linked(cur)
+
+            fx_pairs = find_fx_pairs(cur)
+            fx_created, fx_skipped = link_fx_pairs(cur, fx_pairs, already_linked)
+            conn.commit()
+
+            xfr_pairs = find_same_ccy_pairs(cur)
+            xfr_created, xfr_skipped = link_same_ccy_pairs(cur, xfr_pairs, already_linked)
+            conn.commit()
+
+            visa_pairs = find_visa_payment_pairs(cur)
+            visa_created, visa_skipped = link_visa_payment_pairs(cur, visa_pairs, already_linked)
+            conn.commit()
+
+            print(f"  FX: {fx_created} created, {fx_skipped} skipped")
+            print(f"  Transfers: {xfr_created} created, {xfr_skipped} skipped")
+            print(f"  Visa payments: {visa_created} created, {visa_skipped} skipped")
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"  ERROR linking transfers: {e}")
+        traceback.print_exc()
+
+    # Step 7: Healthcheck pings (only on source-level success)
+    print("\nStep 7: Healthcheck pings...")
     if wise_ok:
         ping_healthcheck(hc_wise, "Wise")
     else:

@@ -63,15 +63,15 @@ export default function Dashboard() {
           {monthlyLoading ? <LoadingSpinner /> : (
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3e" />
-                <XAxis dataKey="month" tick={{ fill: '#8888a0', fontSize: 11 }} tickLine={false} />
-                <YAxis tick={{ fill: '#8888a0', fontSize: 11 }} tickLine={false} tickFormatter={v => `£${(v / 1000).toFixed(0)}k`} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e4e8" />
+                <XAxis dataKey="month" tick={{ fill: '#6b7280', fontSize: 11 }} tickLine={false} />
+                <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} tickLine={false} tickFormatter={v => `£${(v / 1000).toFixed(0)}k`} />
                 <Tooltip
-                  contentStyle={{ background: '#1a1a2e', border: '1px solid #2a2a3e', borderRadius: 8, color: '#e4e4ef' }}
+                  contentStyle={{ background: '#ffffff', border: '1px solid #e2e4e8', borderRadius: 8, color: '#1a1a2e' }}
                   formatter={(value: number) => [`£${value.toLocaleString('en-GB', { minimumFractionDigits: 0 })}`, '']}
                 />
-                <Bar dataKey="income" fill="#22c55e" radius={[2, 2, 0, 0]} />
-                <Bar dataKey="expense" fill="#ef4444" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="income" fill="#16a34a" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="expense" fill="#dc2626" radius={[2, 2, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -83,14 +83,14 @@ export default function Dashboard() {
           {topSpending.length === 0 ? <LoadingSpinner /> : (
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={topSpending} layout="vertical" margin={{ left: 80 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3e" horizontal={false} />
-                <XAxis type="number" tick={{ fill: '#8888a0', fontSize: 11 }} tickFormatter={v => `£${(v / 1000).toFixed(0)}k`} />
-                <YAxis type="category" dataKey="name" tick={{ fill: '#8888a0', fontSize: 11 }} width={80} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e4e8" horizontal={false} />
+                <XAxis type="number" tick={{ fill: '#6b7280', fontSize: 11 }} tickFormatter={v => `£${(v / 1000).toFixed(0)}k`} />
+                <YAxis type="category" dataKey="name" tick={{ fill: '#6b7280', fontSize: 11 }} width={80} />
                 <Tooltip
-                  contentStyle={{ background: '#1a1a2e', border: '1px solid #2a2a3e', borderRadius: 8, color: '#e4e4ef' }}
+                  contentStyle={{ background: '#ffffff', border: '1px solid #e2e4e8', borderRadius: 8, color: '#1a1a2e' }}
                   formatter={(value: number) => [`£${value.toLocaleString('en-GB', { minimumFractionDigits: 2 })}`, 'Spent']}
                 />
-                <Bar dataKey="amount" fill="#ef4444" radius={[0, 2, 2, 0]} />
+                <Bar dataKey="amount" fill="#dc2626" radius={[0, 2, 2, 0]} />
               </BarChart>
             </ResponsiveContainer>
           )}

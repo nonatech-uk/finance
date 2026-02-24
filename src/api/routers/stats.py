@@ -5,7 +5,7 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, Query
 
 from src.api.deps import get_conn
-from src.api.models import MonthlyReport, MonthlyTotal, OverviewStats
+from src.api.models import AccountOption, MonthlyReport, MonthlyTotal, OverviewStats
 
 router = APIRouter()
 
@@ -96,9 +96,18 @@ def overview(
     categorised = cur.fetchone()[0]
     coverage = Decimal(categorised * 100) / Decimal(total_active) if total_active > 0 else Decimal(0)
 
-    # Institutions
-    cur.execute("SELECT DISTINCT institution FROM active_transaction ORDER BY institution")
-    institutions = [r[0] for r in cur.fetchall()]
+    # Active accounts for filter dropdown
+    cur.execute("""
+        SELECT a.institution, a.account_ref,
+               COALESCE(a.display_name, a.account_ref) AS label
+        FROM account a
+        WHERE NOT a.is_archived
+        ORDER BY COALESCE(a.display_name, a.account_ref)
+    """)
+    accounts = [
+        AccountOption(institution=r[0], account_ref=r[1], label=r[2])
+        for r in cur.fetchall()
+    ]
 
     # Date range
     cur.execute("SELECT min(posted_at), max(posted_at) FROM active_transaction")
@@ -112,7 +121,7 @@ def overview(
         dedup_groups=dedup_groups,
         removed_by_dedup=total_raw - total_active,
         category_coverage_pct=round(coverage, 1),
-        institutions=institutions,
+        accounts=accounts,
         date_range_from=date_row[0] if date_row else None,
         date_range_to=date_row[1] if date_row else None,
     )

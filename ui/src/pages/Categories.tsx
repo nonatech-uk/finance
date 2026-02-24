@@ -79,14 +79,14 @@ export default function Categories() {
             {spendingLoading ? <LoadingSpinner /> : (
               <ResponsiveContainer width="100%" height={400}>
                 <BarChart data={chartData} layout="vertical" margin={{ left: 100 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3e" horizontal={false} />
-                  <XAxis type="number" tick={{ fill: '#8888a0', fontSize: 11 }} tickFormatter={v => `£${(v / 1000).toFixed(0)}k`} />
-                  <YAxis type="category" dataKey="name" tick={{ fill: '#8888a0', fontSize: 11 }} width={100} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e4e8" horizontal={false} />
+                  <XAxis type="number" tick={{ fill: '#6b7280', fontSize: 11 }} tickFormatter={v => `£${(v / 1000).toFixed(0)}k`} />
+                  <YAxis type="category" dataKey="name" tick={{ fill: '#6b7280', fontSize: 11 }} width={100} />
                   <Tooltip
-                    contentStyle={{ background: '#1a1a2e', border: '1px solid #2a2a3e', borderRadius: 8, color: '#e4e4ef' }}
+                    contentStyle={{ background: '#ffffff', border: '1px solid #e2e4e8', borderRadius: 8, color: '#1a1a2e' }}
                     formatter={(value: number) => [`£${value.toLocaleString('en-GB', { minimumFractionDigits: 2 })}`, 'Spent']}
                   />
-                  <Bar dataKey="amount" fill="#ef4444" radius={[0, 2, 2, 0]} />
+                  <Bar dataKey="amount" fill="#dc2626" radius={[0, 2, 2, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             )}

@@ -28,3 +28,33 @@ export function fetchTransactions(filters: TransactionFilters = {}) {
 export function fetchTransaction(id: string) {
   return apiFetch<TransactionDetail>(`/transactions/${id}`)
 }
+
+export function updateTransactionNote(id: string, note: string) {
+  return apiFetch<{ ok: boolean }>(`/transactions/${id}/note`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note }),
+  })
+}
+
+export function updateTransactionCategory(id: string, categoryPath: string) {
+  return apiFetch<{ ok: boolean }>(`/transactions/${id}/category`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ category_path: categoryPath }),
+  })
+}
+
+export function linkTransfer(id: string, counterpartId: string) {
+  return apiFetch<{ ok: boolean; event_id: string }>(`/transactions/${id}/link-transfer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ counterpart_id: counterpartId }),
+  })
+}
+
+export function unlinkEvent(eventId: string) {
+  return apiFetch<{ ok: boolean }>(`/economic-events/${eventId}`, {
+    method: 'DELETE',
+  })
+}

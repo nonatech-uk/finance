@@ -100,9 +100,9 @@ def spending_by_category(
 
     cur.execute(f"""
         SELECT
-            COALESCE(cat.full_path, 'Uncategorised') AS category_path,
-            COALESCE(cat.name, 'Uncategorised') AS category_name,
-            cat.category_type,
+            COALESCE(tcat.full_path, cat.full_path, 'Uncategorised') AS category_path,
+            COALESCE(tcat.name, cat.name, 'Uncategorised') AS category_name,
+            COALESCE(tcat.category_type, cat.category_type) AS category_type,
             SUM(rt.amount) AS total,
             COUNT(*) AS transaction_count
         FROM active_transaction rt
@@ -113,8 +113,12 @@ def spending_by_category(
         LEFT JOIN merchant_raw_mapping mrm ON mrm.cleaned_merchant = ct.cleaned_merchant
         LEFT JOIN canonical_merchant cm ON cm.id = mrm.canonical_merchant_id
         LEFT JOIN category cat ON cat.full_path = cm.category_hint
+        LEFT JOIN transaction_category_override tco ON tco.raw_transaction_id = rt.id
+        LEFT JOIN category tcat ON tcat.full_path = tco.category_path
         WHERE {where}
-        GROUP BY cat.full_path, cat.name, cat.category_type
+        GROUP BY COALESCE(tcat.full_path, cat.full_path, 'Uncategorised'),
+                 COALESCE(tcat.name, cat.name, 'Uncategorised'),
+                 COALESCE(tcat.category_type, cat.category_type)
         ORDER BY total ASC
     """, params)
 
