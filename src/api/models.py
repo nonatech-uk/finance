@@ -318,6 +318,20 @@ class CategoryTree(BaseModel):
     items: list[CategoryItem]
 
 
+class CategoryRename(BaseModel):
+    new_name: str
+
+
+class CategoryCreate(BaseModel):
+    name: str
+    parent_id: UUID | None = None
+    category_type: str  # 'income' or 'expense'
+
+
+class CategoryDelete(BaseModel):
+    reassign_to: UUID
+
+
 class SpendingByCategory(BaseModel):
     category_path: str
     category_name: str
