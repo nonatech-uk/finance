@@ -21,6 +21,8 @@ from src.api.models import (
     EconomicEventLeg,
     LinkTransferRequest,
     NoteUpdate,
+    SplitLineItem,
+    SplitRequest,
     TagItem,
     TagUpdate,
     TransactionDetail,
@@ -49,6 +51,7 @@ def list_transactions(
     currency: str | None = None,
     search: str | None = Query(None, description="Search merchant name"),
     tag: str | None = Query(None, description="Filter by tag"),
+    uncategorised: bool = Query(False, description="Show only uncategorised transactions"),
     conn=Depends(get_conn),
 ):
     """List deduplicated transactions with full merchant/category chain."""
@@ -57,8 +60,8 @@ def list_transactions(
     # Sort column mapping
     sort_columns = {
         "posted_at": "rt.posted_at",
-        "merchant": "COALESCE(cm.display_name, cm.name)",
-        "category": "COALESCE(tcat.full_path, cat.full_path)",
+        "merchant": "COALESCE(cm_override.display_name, cm_override.name, cm.display_name, cm.name)",
+        "category": "COALESCE(tcat.full_path, cat_override.full_path, cat.full_path)",
         "amount": "rt.amount",
         "source": "rt.source",
     }
@@ -109,13 +112,21 @@ def list_transactions(
         conditions.append("rt.currency = %(currency)s")
         params["currency"] = currency
     if search:
-        conditions.append(
-            "(cm.name ILIKE %(search)s OR ct.cleaned_merchant ILIKE %(search)s "
-            "OR rt.raw_merchant ILIKE %(search)s OR tn.note ILIKE %(search)s "
-            "OR trim(trailing '.' from trim(trailing '0' from rt.amount::text)) LIKE %(amount_search)s)"
-        )
-        params["search"] = f"%{search}%"
-        params["amount_search"] = f"%{search}%"
+        # Split into tokens — each must match at least one searchable field.
+        # e.g. "bash 34" finds merchants matching "bash" whose amount contains "34"
+        tokens = search.strip().split()
+        for i, token in enumerate(tokens):
+            tok_key = f"search_{i}"
+            amt_key = f"amount_search_{i}"
+            conditions.append(
+                f"(cm.name ILIKE %({tok_key})s OR ct.cleaned_merchant ILIKE %({tok_key})s "
+                f"OR rt.raw_merchant ILIKE %({tok_key})s OR tn.note ILIKE %({tok_key})s "
+                f"OR cm.display_name ILIKE %({tok_key})s "
+                f"OR cm_override.name ILIKE %({tok_key})s OR cm_override.display_name ILIKE %({tok_key})s "
+                f"OR trim(trailing '.' from trim(trailing '0' from rt.amount::text)) LIKE %({amt_key})s)"
+            )
+            params[tok_key] = f"%{token}%"
+            params[amt_key] = f"%{token}%"
     if category:
         conditions.append("COALESCE(tcat.full_path, cat.full_path) LIKE %(category)s")
         params["category"] = f"{category}%"
@@ -124,6 +135,10 @@ def list_transactions(
             "EXISTS (SELECT 1 FROM transaction_tag tt WHERE tt.raw_transaction_id = rt.id AND tt.tag = %(tag)s)"
         )
         params["tag"] = tag
+    if uncategorised:
+        conditions.append(
+            "COALESCE(tcat.full_path, cat.full_path) IS NULL"
+        )
 
     # Always exclude archived and business accounts by default
     conditions.append("(a.is_archived IS NOT TRUE)")
@@ -137,21 +152,26 @@ def list_transactions(
             rt.posted_at, rt.amount, rt.currency,
             rt.raw_merchant, rt.raw_memo,
             ct.cleaned_merchant,
-            cm.id AS canonical_merchant_id,
-            COALESCE(cm.display_name, cm.name) AS canonical_merchant_name,
+            COALESCE(cm_override.id, cm.id) AS canonical_merchant_id,
+            COALESCE(cm_override.display_name, cm_override.name, cm.display_name, cm.name) AS canonical_merchant_name,
             mrm.match_type AS merchant_match_type,
-            COALESCE(tcat.full_path, cat.full_path) AS category_path,
-            COALESCE(tcat.name, cat.name) AS category_name,
-            COALESCE(tcat.category_type, cat.category_type) AS category_type,
+            COALESCE(tcat.full_path, cat_override.full_path, cat.full_path) AS category_path,
+            COALESCE(tcat.name, cat_override.name, cat.name) AS category_name,
+            COALESCE(tcat.category_type, cat_override.category_type, cat.category_type) AS category_type,
             (tco.raw_transaction_id IS NOT NULL) AS category_is_override,
-            tn.note
+            EXISTS (SELECT 1 FROM transaction_split_line sl WHERE sl.raw_transaction_id = rt.id) AS is_split,
+            tn.note,
+            (tmo.raw_transaction_id IS NOT NULL) AS merchant_is_override
         FROM active_transaction rt
         LEFT JOIN account a
             ON a.institution = rt.institution AND a.account_ref = rt.account_ref
         LEFT JOIN cleaned_transaction ct ON ct.raw_transaction_id = rt.id
         LEFT JOIN merchant_raw_mapping mrm ON mrm.cleaned_merchant = ct.cleaned_merchant
         LEFT JOIN canonical_merchant cm ON cm.id = mrm.canonical_merchant_id
+        LEFT JOIN transaction_merchant_override tmo ON tmo.raw_transaction_id = rt.id
+        LEFT JOIN canonical_merchant cm_override ON cm_override.id = tmo.canonical_merchant_id
         LEFT JOIN category cat ON cat.full_path = cm.category_hint
+        LEFT JOIN category cat_override ON cat_override.full_path = cm_override.category_hint
         LEFT JOIN transaction_category_override tco ON tco.raw_transaction_id = rt.id
         LEFT JOIN category tcat ON tcat.full_path = tco.category_path
         LEFT JOIN transaction_note tn ON tn.raw_transaction_id = rt.id
@@ -209,20 +229,25 @@ def get_transaction(
             rt.posted_at, rt.amount, rt.currency,
             rt.raw_merchant, rt.raw_memo, rt.raw_data,
             ct.cleaned_merchant,
-            cm.id AS canonical_merchant_id,
-            COALESCE(cm.display_name, cm.name) AS canonical_merchant_name,
+            COALESCE(cm_override.id, cm.id) AS canonical_merchant_id,
+            COALESCE(cm_override.display_name, cm_override.name, cm.display_name, cm.name) AS canonical_merchant_name,
             mrm.match_type AS merchant_match_type,
-            COALESCE(tcat.full_path, cat.full_path) AS category_path,
-            COALESCE(tcat.name, cat.name) AS category_name,
-            COALESCE(tcat.category_type, cat.category_type) AS category_type,
+            COALESCE(tcat.full_path, cat_override.full_path, cat.full_path) AS category_path,
+            COALESCE(tcat.name, cat_override.name, cat.name) AS category_name,
+            COALESCE(tcat.category_type, cat_override.category_type, cat.category_type) AS category_type,
             (tco.raw_transaction_id IS NOT NULL) AS category_is_override,
+            EXISTS (SELECT 1 FROM transaction_split_line sl WHERE sl.raw_transaction_id = rt.id) AS is_split,
             tn.note,
-            tn.source AS note_source
+            tn.source AS note_source,
+            (tmo.raw_transaction_id IS NOT NULL) AS merchant_is_override
         FROM raw_transaction rt
         LEFT JOIN cleaned_transaction ct ON ct.raw_transaction_id = rt.id
         LEFT JOIN merchant_raw_mapping mrm ON mrm.cleaned_merchant = ct.cleaned_merchant
         LEFT JOIN canonical_merchant cm ON cm.id = mrm.canonical_merchant_id
+        LEFT JOIN transaction_merchant_override tmo ON tmo.raw_transaction_id = rt.id
+        LEFT JOIN canonical_merchant cm_override ON cm_override.id = tmo.canonical_merchant_id
         LEFT JOIN category cat ON cat.full_path = cm.category_hint
+        LEFT JOIN category cat_override ON cat_override.full_path = cm_override.category_hint
         LEFT JOIN transaction_category_override tco ON tco.raw_transaction_id = rt.id
         LEFT JOIN category tcat ON tcat.full_path = tco.category_path
         LEFT JOIN transaction_note tn ON tn.raw_transaction_id = rt.id
@@ -303,11 +328,24 @@ def get_transaction(
     """, (str(transaction_id),))
     tags = [TagItem(tag=r[0], source=r[1]) for r in cur.fetchall()]
 
+    # Split lines
+    cur.execute("""
+        SELECT sl.id, sl.line_number, sl.amount, sl.currency,
+               sl.category_path, cat.name AS category_name, sl.description
+        FROM transaction_split_line sl
+        LEFT JOIN category cat ON cat.full_path = sl.category_path
+        WHERE sl.raw_transaction_id = %s
+        ORDER BY sl.line_number
+    """, (str(transaction_id),))
+    split_cols = [desc[0] for desc in cur.description]
+    split_lines = [SplitLineItem(**dict(zip(split_cols, r))) for r in cur.fetchall()]
+
     return TransactionDetail(
         **txn_data,
         tags=tags,
         dedup_group=dedup_group,
         economic_event=economic_event,
+        split_lines=split_lines,
     )
 
 
@@ -584,6 +622,163 @@ def remove_tag(
 
     conn.commit()
     return {"ok": True}
+
+
+# ── Split Transactions ───────────────────────────────────────────────────────
+
+
+@router.put("/transactions/{transaction_id}/split")
+def save_split(
+    transaction_id: UUID,
+    body: SplitRequest,
+    conn=Depends(get_conn),
+):
+    """Create or replace a split on a transaction."""
+    cur = conn.cursor()
+
+    # Fetch parent transaction
+    cur.execute(
+        "SELECT amount, currency FROM raw_transaction WHERE id = %s",
+        (str(transaction_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Transaction not found")
+    parent_amount, parent_currency = row
+
+    # Validate minimum 2 lines
+    if len(body.lines) < 2:
+        raise HTTPException(400, "A split requires at least 2 lines")
+
+    # Validate amounts sum to parent
+    line_sum = sum(line.amount for line in body.lines)
+    if line_sum != parent_amount:
+        raise HTTPException(
+            400,
+            f"Split lines sum to {line_sum} but transaction amount is {parent_amount}",
+        )
+
+    # Validate category paths exist
+    for line in body.lines:
+        if line.category_path:
+            cur.execute(
+                "SELECT 1 FROM category WHERE full_path = %s",
+                (line.category_path,),
+            )
+            if not cur.fetchone():
+                raise HTTPException(400, f"Category not found: {line.category_path}")
+
+    # Replace: delete existing lines, insert new
+    cur.execute(
+        "DELETE FROM transaction_split_line WHERE raw_transaction_id = %s",
+        (str(transaction_id),),
+    )
+
+    created = []
+    for i, line in enumerate(body.lines, 1):
+        cur.execute("""
+            INSERT INTO transaction_split_line
+                (raw_transaction_id, line_number, amount, currency,
+                 category_path, description)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (
+            str(transaction_id), i, line.amount, parent_currency.strip(),
+            line.category_path, line.description,
+        ))
+        line_id = cur.fetchone()[0]
+        created.append({
+            "id": str(line_id),
+            "line_number": i,
+            "amount": str(line.amount),
+            "currency": parent_currency.strip(),
+            "category_path": line.category_path,
+            "description": line.description,
+        })
+
+    conn.commit()
+    return {"ok": True, "lines": created}
+
+
+@router.delete("/transactions/{transaction_id}/split")
+def delete_split(
+    transaction_id: UUID,
+    conn=Depends(get_conn),
+):
+    """Remove a split, reverting to a single unsplit transaction."""
+    cur = conn.cursor()
+
+    cur.execute(
+        "DELETE FROM transaction_split_line WHERE raw_transaction_id = %s",
+        (str(transaction_id),),
+    )
+    deleted = cur.rowcount
+
+    if deleted == 0:
+        raise HTTPException(404, "No split found for this transaction")
+
+    conn.commit()
+    return {"ok": True, "lines_removed": deleted}
+
+
+@router.get("/transactions/{transaction_id}/split/suggest-amazon")
+def suggest_amazon_split(
+    transaction_id: UUID,
+    conn=Depends(get_conn),
+):
+    """Suggest split lines from matched Amazon order items."""
+    cur = conn.cursor()
+
+    # Fetch parent transaction
+    cur.execute(
+        "SELECT amount, currency FROM raw_transaction WHERE id = %s",
+        (str(transaction_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Transaction not found")
+    parent_amount, parent_currency = row
+
+    # Find matched Amazon orders
+    cur.execute("""
+        SELECT DISTINCT am.order_id
+        FROM amazon_order_match am
+        WHERE am.raw_transaction_id = %s
+    """, (str(transaction_id),))
+    order_ids = [r[0] for r in cur.fetchall()]
+
+    if not order_ids:
+        raise HTTPException(404, "No Amazon order match found for this transaction")
+
+    # Fetch order items
+    cur.execute("""
+        SELECT description, unit_price, quantity, category
+        FROM amazon_order_item
+        WHERE order_id = ANY(%s) AND unit_price IS NOT NULL
+        ORDER BY order_id, description
+    """, (order_ids,))
+
+    lines = []
+    items_total = Decimal("0")
+    for desc, unit_price, quantity, category in cur.fetchall():
+        line_amount = -(unit_price * quantity)  # negative = expense
+        items_total += line_amount
+        lines.append({
+            "amount": str(line_amount),
+            "description": desc,
+            "category_path": None,
+        })
+
+    # Add adjustment line if totals don't match (shipping, discounts, etc.)
+    remainder = parent_amount - items_total
+    if remainder != 0:
+        lines.append({
+            "amount": str(remainder),
+            "description": "Shipping / Adjustment",
+            "category_path": None,
+        })
+
+    return {"lines": lines, "order_ids": order_ids}
 
 
 # ── Bulk Operations ──────────────────────────────────────────────────────────

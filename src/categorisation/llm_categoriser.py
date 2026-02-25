@@ -1,7 +1,7 @@
 """LLM-based categorisation using Anthropic Claude.
 
 Batches uncategorised merchants and asks Claude Haiku to suggest categories
-from the existing hierarchy. Results are queued as pending suggestions.
+from the existing hierarchy. Returns suggestions for the engine to accept or queue.
 """
 
 import json
@@ -9,24 +9,25 @@ import json
 from config.settings import settings
 
 
-BATCH_SIZE = 50
+BATCH_SIZE = 25
 
 
-def categorise_batch(conn, *, dry_run: bool = False) -> dict:
+def categorise_batch(conn, *, dry_run: bool = False) -> list[dict]:
     """Run LLM categorisation for uncategorised merchants.
 
     Batches merchants and sends to Claude Haiku for category suggestions.
-    All suggestions are queued as pending (never auto-accepted from LLM).
+    Returns a list of suggestion dicts (same shape as source_hints.extract_hints)
+    for the engine to handle auto-accept vs queue.
     """
     if not settings.anthropic_api_key:
         print("  ANTHROPIC_API_KEY not set — skipping LLM categorisation")
-        return {"llm_queued": 0}
+        return []
 
     try:
         import anthropic
     except ImportError:
         print("  anthropic package not installed — run: pip install anthropic")
-        return {"llm_queued": 0}
+        return []
 
     cur = conn.cursor()
 
@@ -56,7 +57,7 @@ def categorise_batch(conn, *, dry_run: bool = False) -> dict:
 
     if not merchants:
         print("  No uncategorised merchants remaining for LLM")
-        return {"llm_queued": 0}
+        return []
 
     print(f"  {len(merchants)} merchants to categorise via LLM")
 
@@ -66,10 +67,10 @@ def categorise_batch(conn, *, dry_run: bool = False) -> dict:
             print(f"    {m[1]}")
         if len(merchants) > 10:
             print(f"    ... and {len(merchants) - 10} more")
-        return {"llm_queued": 0}
+        return []
 
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    total_queued = 0
+    all_suggestions = []
 
     for i in range(0, len(merchants), BATCH_SIZE):
         batch = merchants[i:i + BATCH_SIZE]
@@ -78,9 +79,11 @@ def categorise_batch(conn, *, dry_run: bool = False) -> dict:
         print(f"  Batch {batch_num}/{total_batches} ({len(batch)} merchants)...")
 
         merchant_lines = []
+        merchant_names = {}
         for mid, name, dname in batch:
             display = f" (display: {dname})" if dname else ""
             merchant_lines.append(f"- ID:{mid} | {name}{display}")
+            merchant_names[mid] = dname or name
         merchant_text = "\n".join(merchant_lines)
 
         prompt = f"""You are categorising merchants for a personal finance system.
@@ -104,7 +107,7 @@ Respond ONLY with the JSON array, no other text."""
 
         try:
             response = client.messages.create(
-                model="claude-haiku-4-20250414",
+                model="claude-3-haiku-20240307",
                 max_tokens=4096,
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -118,7 +121,7 @@ Respond ONLY with the JSON array, no other text."""
 
             results = json.loads(text)
 
-            batch_queued = 0
+            batch_count = 0
             for result in results:
                 mid = result.get("id", "")
                 cat_path = result.get("category", "SKIP")
@@ -132,20 +135,18 @@ Respond ONLY with the JSON array, no other text."""
                 if not cat_id:
                     continue
 
-                # Cap LLM confidence at 0.80 (never auto-accept)
-                confidence = min(confidence, 0.80)
+                all_suggestions.append({
+                    'canonical_merchant_id': mid,
+                    'suggested_category_id': cat_id,
+                    'suggested_category_path': cat_path,
+                    'merchant_name': merchant_names.get(mid, ''),
+                    'method': 'llm',
+                    'confidence': confidence,
+                    'reasoning': f"LLM: {reasoning}",
+                })
+                batch_count += 1
 
-                cur.execute("""
-                    INSERT INTO category_suggestion
-                        (canonical_merchant_id, suggested_category_id, method, confidence, reasoning)
-                    VALUES (%s, %s, 'llm', %s, %s)
-                    ON CONFLICT DO NOTHING
-                """, (mid, cat_id, confidence, f"LLM: {reasoning}"))
-                batch_queued += cur.rowcount
-
-            conn.commit()
-            total_queued += batch_queued
-            print(f"    Queued {batch_queued} suggestions")
+            print(f"    {batch_count} suggestions from batch")
 
         except json.JSONDecodeError as e:
             print(f"    ERROR: Failed to parse LLM response: {e}")
@@ -154,8 +155,8 @@ Respond ONLY with the JSON array, no other text."""
             print(f"    ERROR: LLM call failed: {e}")
             continue
 
-    print(f"  Total LLM suggestions queued: {total_queued}")
-    return {"llm_queued": total_queued}
+    print(f"  Total LLM suggestions: {len(all_suggestions)}")
+    return all_suggestions
 
 
 def _is_amazon(name: str) -> bool:

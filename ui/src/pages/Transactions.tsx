@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
-import { useTransactions, useTransaction, useUpdateNote, useUpdateTransactionCategory, useLinkTransfer, useUnlinkEvent, useAllTags, useAddTag, useRemoveTag, useBulkUpdateCategory, useBulkUpdateMerchantName, useBulkAddTags, useBulkRemoveTag, useBulkReplaceTags, useBulkUpdateNote } from '../hooks/useTransactions'
+import { useTransactions, useTransaction, useUpdateNote, useUpdateTransactionCategory, useLinkTransfer, useUnlinkEvent, useAllTags, useAddTag, useRemoveTag, useBulkUpdateCategory, useBulkUpdateMerchantName, useBulkAddTags, useBulkRemoveTag, useBulkReplaceTags, useBulkUpdateNote, useSaveSplit, useDeleteSplit, useSuggestAmazonSplit } from '../hooks/useTransactions'
 import { useUpdateMerchantName } from '../hooks/useMerchants'
 import { useCategories } from '../hooks/useCategories'
 import { useOverview } from '../hooks/useStats'
@@ -7,7 +7,8 @@ import CurrencyAmount from '../components/common/CurrencyAmount'
 import Badge from '../components/common/Badge'
 import LoadingSpinner from '../components/common/LoadingSpinner'
 import JsonViewer from '../components/common/JsonViewer'
-import type { TransactionItem, TransactionDetail, CategoryItem, TagItem } from '../api/types'
+import type { TransactionItem, TransactionDetail, CategoryItem, TagItem, SplitLineItem } from '../api/types'
+import type { SplitLineInput } from '../api/transactions'
 
 function SortableHeader({
   label, sortKey, currentSort, currentDir, onSort, align = 'left',
@@ -43,6 +44,7 @@ export default function Transactions() {
   const [amountMax, setAmountMax] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [selectMode, setSelectMode] = useState(false)
+  const [uncategorised, setUncategorised] = useState(false)
   const [sortBy, setSortBy] = useState('posted_at')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
@@ -79,9 +81,10 @@ export default function Transactions() {
     date_to: dateTo || undefined,
     amount_min: amountMin ? Number(amountMin) : undefined,
     amount_max: amountMax ? Number(amountMax) : undefined,
+    uncategorised: uncategorised || undefined,
     sort_by: sortBy,
     sort_dir: sortDir,
-  }), [debouncedSearch, filterInstitution, filterAccountRef, currency, dateFrom, dateTo, amountMin, amountMax, sortBy, sortDir])
+  }), [debouncedSearch, filterInstitution, filterAccountRef, currency, dateFrom, dateTo, amountMin, amountMax, uncategorised, sortBy, sortDir])
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useTransactions(filters)
   const { data: detail, isLoading: detailLoading } = useTransaction(selectedId)
@@ -99,6 +102,7 @@ export default function Transactions() {
     setDateTo('')
     setAmountMin('')
     setAmountMax('')
+    setUncategorised(false)
   }, [])
 
   const selectionCount = selectedIds.size
@@ -204,6 +208,15 @@ export default function Transactions() {
               </button>
             ))}
           </div>
+          <label className="inline-flex items-center gap-1.5 text-sm text-text-secondary cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={uncategorised}
+              onChange={e => setUncategorised(e.target.checked)}
+              className="accent-accent"
+            />
+            Uncategorised
+          </label>
           <button onClick={clearFilters} className="text-text-secondary hover:text-text-primary text-sm px-2">Clear</button>
           {!selectMode ? (
             <button onClick={enterSelectMode} className="text-text-secondary hover:text-accent text-sm px-2 ml-auto">Select</button>
@@ -326,11 +339,20 @@ function TransactionRow({ txn, isSelected, isChecked, selectMode, onClick, onTog
               </svg>
             </span>
           )}
+          {txn.is_split && (
+            <span className="flex-shrink-0" title="Split transaction">
+              <svg className="w-3.5 h-3.5 text-accent opacity-70" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M8 1v4l3 3-3 3v4M8 1v4L5 8l3 3v4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </span>
+          )}
         </div>
       </td>
       <td className="py-2 pr-4">
-        {txn.category_name ? (
-          <span title={txn.category_path || undefined}><Badge variant="accent">{txn.category_name}</Badge></span>
+        {txn.is_split ? (
+          <Badge variant="default">Split</Badge>
+        ) : txn.category_path ? (
+          <Badge variant="accent">{txn.category_path}</Badge>
         ) : (
           <span className="text-text-secondary text-xs">—</span>
         )}
@@ -363,6 +385,9 @@ function TransactionDetailContent({ detail }: { detail: import('../api/types').T
 
       {/* Merchant + Category */}
       <MerchantSection detail={detail} />
+
+      {/* Split */}
+      <SplitSection detail={detail} />
 
       {detail.raw_memo && (
         <section>
@@ -630,6 +655,217 @@ function TransferSection({ detail }: { detail: TransactionDetail }) {
       ) : (
         <div className="text-text-secondary text-xs italic">No linked transfer</div>
       )}
+    </section>
+  )
+}
+
+// ── Split Transaction ────────────────────────────────────────────────────────
+
+function SplitSection({ detail }: { detail: TransactionDetail }) {
+  const [editing, setEditing] = useState(false)
+  const [lines, setLines] = useState<{ amount: string; category_path: string; description: string }[]>([])
+  const saveMutation = useSaveSplit()
+  const deleteMutation = useDeleteSplit()
+  const amazonQuery = useSuggestAmazonSplit(detail.id)
+  const { data: categoryTree } = useCategories()
+
+  const categoryOptions = useMemo(() => {
+    if (!categoryTree) return []
+    return flattenCategories(categoryTree.items)
+  }, [categoryTree])
+
+  const parentAmount = useMemo(() => parseFloat(detail.amount), [detail.amount])
+
+  const lineSum = useMemo(
+    () => lines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0),
+    [lines],
+  )
+  const remaining = useMemo(() => {
+    const r = parentAmount - lineSum
+    return Math.round(r * 100) / 100
+  }, [parentAmount, lineSum])
+
+  const startEdit = useCallback(() => {
+    if (detail.split_lines.length > 0) {
+      setLines(detail.split_lines.map(sl => ({
+        amount: sl.amount,
+        category_path: sl.category_path || '',
+        description: sl.description || '',
+      })))
+    } else {
+      setLines([
+        { amount: '', category_path: '', description: '' },
+        { amount: '', category_path: '', description: '' },
+      ])
+    }
+    setEditing(true)
+  }, [detail.split_lines])
+
+  const handleSave = () => {
+    const splitLines: SplitLineInput[] = lines.map(l => ({
+      amount: parseFloat(l.amount),
+      category_path: l.category_path || null,
+      description: l.description || null,
+    }))
+    saveMutation.mutate({ id: detail.id, lines: splitLines }, {
+      onSuccess: () => setEditing(false),
+    })
+  }
+
+  const handleUnsplit = () => {
+    deleteMutation.mutate({ id: detail.id }, {
+      onSuccess: () => setEditing(false),
+    })
+  }
+
+  const handleFillAmazon = () => {
+    amazonQuery.refetch().then(result => {
+      if (result.data) {
+        setLines(result.data.lines.map(l => ({
+          amount: l.amount,
+          category_path: l.category_path || '',
+          description: l.description || '',
+        })))
+      }
+    })
+  }
+
+  const updateLine = (idx: number, field: string, value: string) => {
+    setLines(prev => prev.map((l, i) => i === idx ? { ...l, [field]: value } : l))
+  }
+
+  const removeLine = (idx: number) => {
+    setLines(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  const addLine = () => {
+    setLines(prev => [...prev, { amount: '', category_path: '', description: '' }])
+  }
+
+  const autoFillLast = () => {
+    if (lines.length === 0) return
+    setLines(prev => prev.map((l, i) =>
+      i === prev.length - 1 ? { ...l, amount: remaining.toFixed(4) } : l
+    ))
+  }
+
+  // Viewing existing split (not editing)
+  if (detail.split_lines.length > 0 && !editing) {
+    return (
+      <section>
+        <div className="flex items-center gap-2 mb-2">
+          <h4 className="text-xs uppercase text-text-secondary">Split ({detail.split_lines.length} lines)</h4>
+          <button onClick={startEdit} className="text-text-secondary hover:text-accent text-xs ml-auto">Edit</button>
+          <button
+            onClick={handleUnsplit}
+            disabled={deleteMutation.isPending}
+            className="text-text-secondary hover:text-red-400 text-xs disabled:opacity-50"
+          >
+            {deleteMutation.isPending ? '...' : 'Unsplit'}
+          </button>
+        </div>
+        <div className="space-y-1">
+          {detail.split_lines.map(sl => (
+            <div key={sl.id} className="flex items-center gap-2 text-xs bg-bg-card rounded px-2 py-1.5">
+              <span className="flex-1 truncate text-text-primary">{sl.description || '—'}</span>
+              {sl.category_path ? (
+                <Badge variant="accent">{sl.category_path}</Badge>
+              ) : (
+                <span className="text-text-secondary">—</span>
+              )}
+              <span className="font-mono text-right w-20">
+                <CurrencyAmount amount={sl.amount} currency={sl.currency} showSign={false} />
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+    )
+  }
+
+  // Editor mode
+  if (editing) {
+    const canSave = lines.length >= 2 && Math.abs(remaining) < 0.005 && lines.every(l => l.amount !== '')
+
+    return (
+      <section>
+        <h4 className="text-xs uppercase text-text-secondary mb-2">Split Transaction</h4>
+        <div className="space-y-2">
+          {lines.map((line, idx) => (
+            <div key={idx} className="flex gap-1.5 items-start">
+              <input
+                type="number"
+                step="0.01"
+                value={line.amount}
+                onChange={e => updateLine(idx, 'amount', e.target.value)}
+                placeholder="Amount"
+                className="w-24 bg-bg-primary border border-border rounded px-2 py-1 text-xs text-text-primary focus:outline-none focus:border-accent font-mono"
+              />
+              <select
+                value={line.category_path}
+                onChange={e => updateLine(idx, 'category_path', e.target.value)}
+                className="flex-1 bg-bg-primary border border-border rounded px-1.5 py-1 text-xs text-text-primary focus:outline-none focus:border-accent min-w-0"
+              >
+                <option value="">-- Category --</option>
+                {categoryOptions.map(opt => (
+                  <option key={opt.path} value={opt.path}>{opt.path}</option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={line.description}
+                onChange={e => updateLine(idx, 'description', e.target.value)}
+                placeholder="Description"
+                className="flex-1 bg-bg-primary border border-border rounded px-2 py-1 text-xs text-text-primary focus:outline-none focus:border-accent min-w-0"
+              />
+              {lines.length > 2 && (
+                <button onClick={() => removeLine(idx)} className="text-text-secondary hover:text-red-400 text-xs px-1">×</button>
+              )}
+            </div>
+          ))}
+
+          <div className="flex items-center gap-2 pt-1">
+            <button onClick={addLine} className="text-accent hover:text-accent-hover text-xs">+ Add line</button>
+            <button onClick={autoFillLast} className="text-text-secondary hover:text-accent text-xs">Auto-fill last</button>
+            <button onClick={handleFillAmazon} disabled={amazonQuery.isFetching} className="text-text-secondary hover:text-accent text-xs disabled:opacity-50">
+              {amazonQuery.isFetching ? '...' : 'Fill from Amazon'}
+            </button>
+            <span className={`ml-auto text-xs font-mono ${Math.abs(remaining) < 0.005 ? 'text-green-400' : 'text-red-400'}`}>
+              Remaining: {remaining >= 0 ? '' : '−'}{detail.currency} {Math.abs(remaining).toFixed(2)}
+            </span>
+          </div>
+
+          {saveMutation.isError && (
+            <div className="text-red-400 text-xs">{(saveMutation.error as Error).message || 'Failed to save split'}</div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={handleSave}
+              disabled={!canSave || saveMutation.isPending}
+              className="text-xs px-3 py-1 bg-accent text-white rounded-md hover:bg-accent-hover disabled:opacity-50"
+            >
+              {saveMutation.isPending ? 'Saving...' : 'Save Split'}
+            </button>
+            <button onClick={() => setEditing(false)} className="text-xs px-3 py-1 text-text-secondary hover:text-text-primary">
+              Cancel
+            </button>
+          </div>
+        </div>
+      </section>
+    )
+  }
+
+  // Not split — show button
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-2">
+        <h4 className="text-xs uppercase text-text-secondary">Split</h4>
+        <button onClick={startEdit} className="text-text-secondary hover:text-accent text-xs ml-auto">
+          Split this transaction
+        </button>
+      </div>
+      <div className="text-text-secondary text-xs italic">Not split</div>
     </section>
   )
 }

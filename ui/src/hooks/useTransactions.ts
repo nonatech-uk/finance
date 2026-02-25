@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { fetchTransactions, fetchTransaction, updateTransactionNote, updateTransactionCategory, linkTransfer, unlinkEvent, addTransactionTag, removeTransactionTag, fetchAllTags, bulkUpdateCategory, bulkUpdateMerchantName, bulkAddTags, bulkRemoveTag, bulkReplaceTags, bulkUpdateNote, type TransactionFilters } from '../api/transactions'
+import { fetchTransactions, fetchTransaction, updateTransactionNote, updateTransactionCategory, linkTransfer, unlinkEvent, addTransactionTag, removeTransactionTag, fetchAllTags, bulkUpdateCategory, bulkUpdateMerchantName, bulkAddTags, bulkRemoveTag, bulkReplaceTags, bulkUpdateNote, saveSplit, deleteSplit, suggestAmazonSplit, type TransactionFilters, type SplitLineInput } from '../api/transactions'
 
 export function useTransactions(filters: Omit<TransactionFilters, 'cursor' | 'offset'>) {
   const isDateSort = !filters.sort_by || filters.sort_by === 'posted_at'
@@ -188,5 +188,40 @@ export function useBulkUpdateNote() {
       queryClient.invalidateQueries({ queryKey: ['transactions'] })
       queryClient.invalidateQueries({ queryKey: ['transaction'] })
     },
+  })
+}
+
+// ── Split Transactions ──
+
+export function useSaveSplit() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, lines }: { id: string; lines: SplitLineInput[] }) =>
+      saveSplit(id, lines),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['transaction', variables.id] })
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+    },
+  })
+}
+
+export function useDeleteSplit() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id }: { id: string }) =>
+      deleteSplit(id),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['transaction', variables.id] })
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+    },
+  })
+}
+
+export function useSuggestAmazonSplit(id: string | null) {
+  return useQuery({
+    queryKey: ['amazon-split-suggestion', id],
+    queryFn: () => suggestAmazonSplit(id!),
+    enabled: false,  // manual trigger only
+    retry: false,
   })
 }

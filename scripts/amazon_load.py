@@ -161,12 +161,13 @@ def build_order_totals(conn) -> Dict[str, dict]:
 
 
 def find_amazon_transactions(conn) -> List[dict]:
-    """Find all bank transactions that look like Amazon charges."""
+    """Find all active bank transactions that look like Amazon charges."""
     cur = conn.cursor()
     # Match on raw_merchant containing Amazon-like patterns
+    # Use active_transaction to only match visible (non-suppressed) transactions
     cur.execute("""
         SELECT id, posted_at, amount, currency, raw_merchant, institution
-        FROM raw_transaction
+        FROM active_transaction
         WHERE (
             raw_merchant ILIKE '%%AMZN%%'
             OR raw_merchant ILIKE '%%AMAZON%%'
@@ -286,6 +287,69 @@ def _insert_match(cur, order_id: str, txn_id, confidence, method: str, notes: st
     """, (order_id, txn_id, confidence, method, notes))
 
 
+def fixup_suppressed_matches(conn, dry_run: bool = False) -> Dict[str, int]:
+    """Re-point matches from suppressed transactions to their preferred counterparts.
+
+    When matches were created against raw_transaction, some may point to
+    non-preferred dedup group members. This finds those and re-points them
+    to the preferred member via dedup_group_member.
+    """
+    cur = conn.cursor()
+
+    # Find matches pointing to non-active transactions
+    cur.execute("""
+        SELECT am.order_id, am.raw_transaction_id, am.match_confidence, am.match_method
+        FROM amazon_order_match am
+        WHERE NOT EXISTS (
+            SELECT 1 FROM active_transaction at WHERE at.id = am.raw_transaction_id
+        )
+    """)
+    stale = cur.fetchall()
+
+    if not stale:
+        return {"fixed": 0, "orphaned": 0}
+
+    fixed = 0
+    orphaned = 0
+
+    for order_id, old_txn_id, confidence, method in stale:
+        # Find the preferred member in the same dedup group
+        cur.execute("""
+            SELECT dgm2.raw_transaction_id
+            FROM dedup_group_member dgm1
+            JOIN dedup_group_member dgm2 ON dgm2.dedup_group_id = dgm1.dedup_group_id
+            WHERE dgm1.raw_transaction_id = %s
+              AND dgm2.is_preferred = true
+              AND dgm2.raw_transaction_id != %s
+        """, (str(old_txn_id), str(old_txn_id)))
+        row = cur.fetchone()
+
+        if row:
+            new_txn_id = row[0]
+            if not dry_run:
+                # Insert new match (ON CONFLICT handles duplicates)
+                cur.execute("""
+                    INSERT INTO amazon_order_match
+                        (order_id, raw_transaction_id, match_confidence, match_method, notes)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (order_id, raw_transaction_id) DO NOTHING
+                """, (order_id, str(new_txn_id), confidence, method,
+                      f"Fixup: re-pointed from suppressed {old_txn_id}"))
+                # Delete old match
+                cur.execute("""
+                    DELETE FROM amazon_order_match
+                    WHERE order_id = %s AND raw_transaction_id = %s
+                """, (order_id, str(old_txn_id)))
+            fixed += 1
+        else:
+            orphaned += 1
+
+    if not dry_run:
+        conn.commit()
+
+    return {"fixed": fixed, "orphaned": orphaned}
+
+
 def main():
     parser = argparse.ArgumentParser(description="Load Amazon order history and match to transactions")
     parser.add_argument("files", nargs="*", help="Path(s) to Amazon order history CSV files")
@@ -348,16 +412,25 @@ def main():
             print(f"  Matches: {match_stats['exact']} exact, {match_stats['close']} close")
 
             if not args.dry_run:
+                # Fix up any matches pointing to suppressed transactions
+                print("\nStep 3: Fixing up suppressed matches...")
+                fixup_stats = fixup_suppressed_matches(conn)
+                print(f"  Fixed: {fixup_stats['fixed']}, Orphaned: {fixup_stats['orphaned']}")
+
                 # Summary
                 cur = conn.cursor()
                 cur.execute("SELECT count(DISTINCT order_id) FROM amazon_order_match")
                 matched_orders = cur.fetchone()[0]
-                cur.execute("SELECT count(DISTINCT raw_transaction_id) FROM amazon_order_match")
+                cur.execute("""
+                    SELECT count(DISTINCT am.raw_transaction_id)
+                    FROM amazon_order_match am
+                    JOIN active_transaction at ON at.id = am.raw_transaction_id
+                """)
                 matched_txns = cur.fetchone()[0]
-                print(f"\n  Total matched: {matched_orders} orders ↔ {matched_txns} transactions")
+                print(f"\n  Total matched: {matched_orders} orders ↔ {matched_txns} active transactions")
 
                 cur.execute("""
-                    SELECT count(*) FROM raw_transaction
+                    SELECT count(*) FROM active_transaction
                     WHERE (raw_merchant ILIKE '%%AMZN%%' OR raw_merchant ILIKE '%%AMAZON%%'
                            OR raw_merchant ILIKE '%%AMZ %%' OR raw_merchant ILIKE '%%Amazon.co%%')
                     AND amount < 0

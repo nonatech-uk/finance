@@ -103,26 +103,55 @@ def spending_by_category(
     where = " AND ".join(conditions)
 
     cur.execute(f"""
+        WITH effective_lines AS (
+            -- Unsplit transactions: normal category resolution
+            SELECT rt.amount, rt.currency, rt.posted_at,
+                   rt.institution, rt.account_ref,
+                   COALESCE(tcat.full_path, cat_override.full_path, cat.full_path) AS category_path,
+                   COALESCE(tcat.name, cat_override.name, cat.name) AS category_name,
+                   COALESCE(tcat.category_type, cat_override.category_type, cat.category_type) AS category_type
+            FROM active_transaction rt
+            LEFT JOIN account acct
+                ON acct.institution = rt.institution AND acct.account_ref = rt.account_ref
+            LEFT JOIN cleaned_transaction ct ON ct.raw_transaction_id = rt.id
+            LEFT JOIN merchant_raw_mapping mrm ON mrm.cleaned_merchant = ct.cleaned_merchant
+            LEFT JOIN canonical_merchant cm ON cm.id = mrm.canonical_merchant_id
+            LEFT JOIN transaction_merchant_override tmo ON tmo.raw_transaction_id = rt.id
+            LEFT JOIN canonical_merchant cm_override ON cm_override.id = tmo.canonical_merchant_id
+            LEFT JOIN category cat ON cat.full_path = cm.category_hint
+            LEFT JOIN category cat_override ON cat_override.full_path = cm_override.category_hint
+            LEFT JOIN transaction_category_override tco ON tco.raw_transaction_id = rt.id
+            LEFT JOIN category tcat ON tcat.full_path = tco.category_path
+            WHERE NOT EXISTS (
+                SELECT 1 FROM transaction_split_line sl WHERE sl.raw_transaction_id = rt.id
+            )
+            AND {where}
+
+            UNION ALL
+
+            -- Split transactions: each line has its own amount + category
+            SELECT sl.amount, sl.currency, rt.posted_at,
+                   rt.institution, rt.account_ref,
+                   sl.category_path,
+                   scat.name AS category_name,
+                   scat.category_type
+            FROM active_transaction rt
+            LEFT JOIN account acct
+                ON acct.institution = rt.institution AND acct.account_ref = rt.account_ref
+            JOIN transaction_split_line sl ON sl.raw_transaction_id = rt.id
+            LEFT JOIN category scat ON scat.full_path = sl.category_path
+            WHERE {where}
+        )
         SELECT
-            COALESCE(tcat.full_path, cat.full_path, 'Uncategorised') AS category_path,
-            COALESCE(tcat.name, cat.name, 'Uncategorised') AS category_name,
-            COALESCE(tcat.category_type, cat.category_type) AS category_type,
-            SUM(rt.amount) AS total,
+            COALESCE(el.category_path, 'Uncategorised') AS category_path,
+            COALESCE(el.category_name, 'Uncategorised') AS category_name,
+            el.category_type,
+            SUM(el.amount) AS total,
             COUNT(*) AS transaction_count
-        FROM active_transaction rt
-        LEFT JOIN account acct
-            ON acct.institution = rt.institution
-            AND acct.account_ref = rt.account_ref
-        LEFT JOIN cleaned_transaction ct ON ct.raw_transaction_id = rt.id
-        LEFT JOIN merchant_raw_mapping mrm ON mrm.cleaned_merchant = ct.cleaned_merchant
-        LEFT JOIN canonical_merchant cm ON cm.id = mrm.canonical_merchant_id
-        LEFT JOIN category cat ON cat.full_path = cm.category_hint
-        LEFT JOIN transaction_category_override tco ON tco.raw_transaction_id = rt.id
-        LEFT JOIN category tcat ON tcat.full_path = tco.category_path
-        WHERE {where}
-        GROUP BY COALESCE(tcat.full_path, cat.full_path, 'Uncategorised'),
-                 COALESCE(tcat.name, cat.name, 'Uncategorised'),
-                 COALESCE(tcat.category_type, cat.category_type)
+        FROM effective_lines el
+        GROUP BY COALESCE(el.category_path, 'Uncategorised'),
+                 COALESCE(el.category_name, 'Uncategorised'),
+                 el.category_type
         ORDER BY total ASC
     """, params)
 
@@ -246,6 +275,17 @@ def rename_category(category_id: UUID, body: CategoryRename, conn=Depends(get_co
         WHERE category_path LIKE %s
     """, (new_prefix, len(old_prefix) + 1, old_prefix + "%"))
 
+    # 5. Cascade to transaction_split_line.category_path
+    cur.execute(
+        "UPDATE transaction_split_line SET category_path = %s WHERE category_path = %s",
+        (new_path, old_path),
+    )
+    cur.execute("""
+        UPDATE transaction_split_line
+        SET category_path = %s || substring(category_path from %s)
+        WHERE category_path LIKE %s
+    """, (new_prefix, len(old_prefix) + 1, old_prefix + "%"))
+
     conn.commit()
 
     return {
@@ -301,6 +341,17 @@ def delete_category(category_id: UUID, body: CategoryDelete, conn=Depends(get_co
     )
     cur.execute("""
         UPDATE transaction_category_override
+        SET category_path = %s
+        WHERE category_path LIKE %s
+    """, (target_path, old_prefix + "%"))
+
+    # 2b. Reassign transaction_split_line.category_path
+    cur.execute(
+        "UPDATE transaction_split_line SET category_path = %s WHERE category_path = %s",
+        (target_path, old_path),
+    )
+    cur.execute("""
+        UPDATE transaction_split_line
         SET category_path = %s
         WHERE category_path LIKE %s
     """, (target_path, old_prefix + "%"))

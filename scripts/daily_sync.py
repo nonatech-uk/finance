@@ -139,16 +139,25 @@ def run_dedup():
 
 
 def run_categorisation():
-    """Run source-hint categorisation for newly matched merchants."""
-    from src.categorisation.engine import run_naming, run_source_hints
+    """Run full categorisation pipeline: naming, source hints, LLM, fuzzy merge, Amazon, override learning."""
+    from src.categorisation.engine import run_all
 
     conn = psycopg2.connect(settings.dsn)
     try:
-        naming_result = run_naming(conn)
-        hints_result = run_source_hints(conn)
-        print(f"  Names: {naming_result['display_names_set']} set, "
-              f"Hints: {hints_result['auto_accepted']} accepted, "
-              f"{hints_result['queued']} queued")
+        results = run_all(conn)
+        # Summarise key stats
+        naming = results.get('naming', {})
+        hints = results.get('source_hints', {})
+        llm = results.get('llm', {})
+        fuzzy = results.get('fuzzy', {})
+        amazon = results.get('amazon', {})
+        overrides = results.get('overrides', {})
+        print(f"  Names: {naming.get('display_names_set', 0)} set, "
+              f"Hints: {hints.get('auto_accepted', 0)} accepted / {hints.get('queued', 0)} queued, "
+              f"LLM: {llm.get('llm_auto_accepted', 0)} accepted / {llm.get('llm_queued', 0)} queued, "
+              f"Fuzzy: {fuzzy.get('fuzzy_auto_merged', 0)} merged / {fuzzy.get('fuzzy_suggested', 0)} suggested, "
+              f"Amazon: {amazon.get('amazon_categorised', 0)} categorised, "
+              f"Learned: {overrides.get('merchant_corrections', 0)} corrections")
     finally:
         conn.close()
 
@@ -209,8 +218,18 @@ def main():
         print(f"  ERROR in categorisation: {e}")
         traceback.print_exc()
 
-    # Step 6: Link inter-account transfers and FX conversions
-    print("\nStep 6: Link transfers & FX events...")
+    # Step 6: Apply merchant split rules
+    print("\nStep 6: Apply merchant split rules...")
+    try:
+        from scripts.apply_split_rules import apply_split_rules
+        result = apply_split_rules()
+        print(f"  Rules: {result['total_rules']}, Overrides: {result['overrides_created']}")
+    except Exception as e:
+        print(f"  ERROR applying split rules: {e}")
+        traceback.print_exc()
+
+    # Step 7: Link inter-account transfers and FX conversions
+    print("\nStep 7: Link transfers & FX events...")
     try:
         from scripts.link_fx_events import (
             find_fx_pairs, find_same_ccy_pairs, find_visa_payment_pairs,
@@ -243,8 +262,8 @@ def main():
         print(f"  ERROR linking transfers: {e}")
         traceback.print_exc()
 
-    # Step 7: Healthcheck pings (only on source-level success)
-    print("\nStep 7: Healthcheck pings...")
+    # Step 8: Healthcheck pings (only on source-level success)
+    print("\nStep 8: Healthcheck pings...")
     if wise_ok:
         ping_healthcheck(hc_wise, "Wise")
     else:

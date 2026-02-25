@@ -18,6 +18,7 @@ export interface TransactionItem {
   category_name: string | null
   category_type: string | null
   category_is_override: boolean
+  is_split: boolean
   note: string | null
   tags: string[]
 }
@@ -61,6 +62,16 @@ export interface EconomicEventInfo {
   legs: EconomicEventLeg[]
 }
 
+export interface SplitLineItem {
+  id: string
+  line_number: number
+  amount: string
+  currency: string
+  category_path: string | null
+  category_name: string | null
+  description: string | null
+}
+
 export interface TransactionDetail extends TransactionItem {
   raw_data: Record<string, unknown> | null
   note: string | null
@@ -68,6 +79,7 @@ export interface TransactionDetail extends TransactionItem {
   tags: TagItem[]
   dedup_group: DedupGroupInfo | null
   economic_event: EconomicEventInfo | null
+  split_lines: SplitLineItem[]
 }
 
 // ── Bulk Operations ──

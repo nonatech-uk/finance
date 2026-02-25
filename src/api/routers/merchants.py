@@ -1,9 +1,12 @@
 """Merchant endpoints."""
 
+import csv
+import io
 from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from src.api.deps import get_conn
 from src.api.models import (
@@ -21,6 +24,9 @@ from src.api.models import (
     MerchantMergeRequest,
     MerchantNameUpdate,
     MerchantTransaction,
+    SplitRuleCreate,
+    SplitRuleItem,
+    SplitRuleList,
     SuggestionReview,
 )
 
@@ -155,6 +161,59 @@ def list_merchants(
     return MerchantList(items=items, next_cursor=next_cursor, has_more=has_more)
 
 
+@router.get("/merchants/export")
+def export_merchants(conn=Depends(get_conn)):
+    """Export all active merchants as CSV with display name, canonical name, aliases, category, last used date."""
+    cur = conn.cursor()
+
+    cur.execute("""
+        WITH merchant_last_used AS (
+            SELECT
+                mrm.canonical_merchant_id,
+                MAX(at2.posted_at) AS last_used
+            FROM merchant_raw_mapping mrm
+            JOIN cleaned_transaction ct ON ct.cleaned_merchant = mrm.cleaned_merchant
+            JOIN active_transaction at2 ON at2.id = ct.raw_transaction_id
+            JOIN account acct ON acct.institution = at2.institution AND acct.account_ref = at2.account_ref
+            WHERE acct.scope = 'personal' OR acct.scope IS NULL
+            GROUP BY mrm.canonical_merchant_id
+        )
+        SELECT
+            COALESCE(cm.display_name, cm.name) AS display_name,
+            cm.name AS canonical_name,
+            mrm.cleaned_merchant AS alias,
+            cm.category_hint,
+            mlu.last_used
+        FROM canonical_merchant cm
+        JOIN merchant_raw_mapping mrm ON mrm.canonical_merchant_id = cm.id
+        LEFT JOIN merchant_last_used mlu ON mlu.canonical_merchant_id = cm.id
+        WHERE cm.merged_into_id IS NULL
+          AND mlu.last_used IS NOT NULL
+        ORDER BY COALESCE(cm.display_name, cm.name), mrm.cleaned_merchant
+    """)
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Display Name", "Canonical Name", "Alias", "Category", "Last Used"])
+
+    for row in cur.fetchall():
+        display_name, canonical_name, alias, category, last_used = row
+        writer.writerow([
+            display_name or "",
+            canonical_name or "",
+            alias or "",
+            category or "",
+            str(last_used) if last_used else "",
+        ])
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=merchants.csv"},
+    )
+
+
 @router.get("/merchants/suggestions", response_model=CategorySuggestionList)
 def list_suggestions(
     status: str = Query("pending", description="Filter by status"),
@@ -238,14 +297,38 @@ def review_suggestion(
 
     # If accepted, apply the category to the merchant
     if body.status == 'accepted':
-        cur.execute("""
-            UPDATE canonical_merchant
-            SET category_hint = (SELECT full_path FROM category WHERE id = %s),
-                category_method = %s,
-                category_confidence = %s,
-                category_set_at = now()
-            WHERE id = %s
-        """, (str(cat_id), method, float(confidence), str(cm_id)))
+        if method == 'fuzzy_merge':
+            # Extract merge target ID from reasoning field
+            import re as _re
+            cur.execute("SELECT reasoning FROM category_suggestion WHERE id = %s", (suggestion_id,))
+            reasoning = cur.fetchone()[0] or ''
+            match = _re.search(r'merge_target:([0-9a-f-]+)', reasoning)
+            if match:
+                from src.categorisation.merger import merge
+                target_id = match.group(1)
+                try:
+                    merge(conn, secondary_id=str(cm_id), surviving_id=target_id)
+                except ValueError as e:
+                    raise HTTPException(400, f"Merge failed: {e}")
+            else:
+                # Fallback: just set category like normal
+                cur.execute("""
+                    UPDATE canonical_merchant
+                    SET category_hint = (SELECT full_path FROM category WHERE id = %s),
+                        category_method = %s,
+                        category_confidence = %s,
+                        category_set_at = now()
+                    WHERE id = %s
+                """, (str(cat_id), method, float(confidence), str(cm_id)))
+        else:
+            cur.execute("""
+                UPDATE canonical_merchant
+                SET category_hint = (SELECT full_path FROM category WHERE id = %s),
+                    category_method = %s,
+                    category_confidence = %s,
+                    category_set_at = now()
+                WHERE id = %s
+            """, (str(cat_id), method, float(confidence), str(cm_id)))
 
     conn.commit()
 
@@ -320,6 +403,161 @@ def delete_rule(rule_id: int, conn=Depends(get_conn)):
         raise HTTPException(404, "Rule not found")
     conn.commit()
     return {"id": rule_id, "deleted": True}
+
+
+# ── Split Rules ──────────────────────────────────────────────────────────────
+# Amount-based merchant routing: when cleaned_merchant matches a pattern AND
+# amount matches, override the canonical merchant for that transaction.
+
+
+@router.get("/merchants/split-rules", response_model=SplitRuleList)
+def list_split_rules(conn=Depends(get_conn)):
+    """List all merchant split rules."""
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT sr.id, sr.merchant_pattern, sr.amount_exact, sr.amount_min, sr.amount_max,
+               sr.target_merchant_id, COALESCE(cm.display_name, cm.name) AS target_merchant_name,
+               sr.priority, sr.description
+        FROM merchant_split_rule sr
+        JOIN canonical_merchant cm ON cm.id = sr.target_merchant_id
+        ORDER BY sr.priority, sr.id
+    """)
+    columns = [desc[0] for desc in cur.description]
+    rows = cur.fetchall()
+    items = [SplitRuleItem(**dict(zip(columns, row))) for row in rows]
+    return SplitRuleList(items=items)
+
+
+@router.post("/merchants/split-rules", response_model=SplitRuleItem)
+def create_split_rule(body: SplitRuleCreate, conn=Depends(get_conn)):
+    """Create a new merchant split rule."""
+    cur = conn.cursor()
+
+    # Validate target merchant exists
+    cur.execute("SELECT id, COALESCE(display_name, name) FROM canonical_merchant WHERE id = %s",
+                (str(body.target_merchant_id),))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Target merchant not found")
+    target_name = row[1]
+
+    cur.execute("""
+        INSERT INTO merchant_split_rule
+            (merchant_pattern, amount_exact, amount_min, amount_max,
+             target_merchant_id, priority, description)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+    """, (body.merchant_pattern,
+          body.amount_exact, body.amount_min, body.amount_max,
+          str(body.target_merchant_id), body.priority, body.description))
+    rule_id = cur.fetchone()[0]
+    conn.commit()
+
+    return SplitRuleItem(
+        id=rule_id,
+        target_merchant_name=target_name,
+        **body.model_dump(),
+    )
+
+
+@router.put("/merchants/split-rules/{rule_id}", response_model=SplitRuleItem)
+def update_split_rule(rule_id: int, body: SplitRuleCreate, conn=Depends(get_conn)):
+    """Update an existing merchant split rule."""
+    cur = conn.cursor()
+
+    # Validate target merchant exists
+    cur.execute("SELECT id, COALESCE(display_name, name) FROM canonical_merchant WHERE id = %s",
+                (str(body.target_merchant_id),))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Target merchant not found")
+    target_name = row[1]
+
+    cur.execute("""
+        UPDATE merchant_split_rule
+        SET merchant_pattern = %s, amount_exact = %s, amount_min = %s, amount_max = %s,
+            target_merchant_id = %s, priority = %s, description = %s
+        WHERE id = %s
+    """, (body.merchant_pattern,
+          body.amount_exact, body.amount_min, body.amount_max,
+          str(body.target_merchant_id), body.priority, body.description,
+          rule_id))
+    if cur.rowcount == 0:
+        raise HTTPException(404, "Rule not found")
+    conn.commit()
+
+    return SplitRuleItem(
+        id=rule_id,
+        target_merchant_name=target_name,
+        **body.model_dump(),
+    )
+
+
+@router.delete("/merchants/split-rules/{rule_id}")
+def delete_split_rule(rule_id: int, conn=Depends(get_conn)):
+    """Delete a merchant split rule and its generated overrides."""
+    cur = conn.cursor()
+
+    # Remove overrides created by this rule
+    cur.execute("DELETE FROM transaction_merchant_override WHERE split_rule_id = %s", (rule_id,))
+    overrides_removed = cur.rowcount
+
+    cur.execute("DELETE FROM merchant_split_rule WHERE id = %s", (rule_id,))
+    if cur.rowcount == 0:
+        raise HTTPException(404, "Rule not found")
+    conn.commit()
+
+    return {"id": rule_id, "deleted": True, "overrides_removed": overrides_removed}
+
+
+@router.post("/merchants/split-rules/apply")
+def apply_split_rules(conn=Depends(get_conn)):
+    """Apply all split rules, creating overrides for matching transactions."""
+    cur = conn.cursor()
+
+    # Load rules ordered by priority
+    cur.execute("""
+        SELECT id, merchant_pattern, amount_exact, amount_min, amount_max, target_merchant_id
+        FROM merchant_split_rule
+        ORDER BY priority, id
+    """)
+    rules = cur.fetchall()
+
+    total_created = 0
+    for rule_id, pattern, amt_exact, amt_min, amt_max, target_id in rules:
+        amount_conditions = []
+        params: dict = {"pattern": pattern, "target_id": str(target_id), "rule_id": rule_id}
+
+        if amt_exact is not None:
+            amount_conditions.append("rt.amount = %(amt_exact)s")
+            params["amt_exact"] = amt_exact
+        if amt_min is not None:
+            amount_conditions.append("rt.amount >= %(amt_min)s")
+            params["amt_min"] = amt_min
+        if amt_max is not None:
+            amount_conditions.append("rt.amount <= %(amt_max)s")
+            params["amt_max"] = amt_max
+
+        amount_where = (" AND " + " AND ".join(amount_conditions)) if amount_conditions else ""
+
+        cur.execute(f"""
+            INSERT INTO transaction_merchant_override
+                (raw_transaction_id, canonical_merchant_id, split_rule_id)
+            SELECT rt.id, %(target_id)s::uuid, %(rule_id)s
+            FROM cleaned_transaction ct
+            JOIN active_transaction rt ON rt.id = ct.raw_transaction_id
+            WHERE ct.cleaned_merchant LIKE %(pattern)s
+              {amount_where}
+              AND NOT EXISTS (
+                  SELECT 1 FROM transaction_merchant_override tmo
+                  WHERE tmo.raw_transaction_id = rt.id
+              )
+            ON CONFLICT (raw_transaction_id) DO NOTHING
+        """, params)
+        total_created += cur.rowcount
+
+    conn.commit()
+    return {"rules_applied": len(rules), "overrides_created": total_created}
 
 
 # ── Merchant Detail ──────────────────────────────────────────────────────────

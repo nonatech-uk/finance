@@ -18,6 +18,7 @@ export interface TransactionFilters {
   currency?: string
   search?: string
   tag?: string
+  uncategorised?: boolean
 }
 
 export function fetchTransactions(filters: TransactionFilters = {}) {
@@ -130,4 +131,34 @@ export function bulkUpdateNote(transactionIds: string[], note: string, mode: 're
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transaction_ids: transactionIds, note, mode }),
   })
+}
+
+// ── Split Transactions ──
+
+export interface SplitLineInput {
+  amount: number
+  category_path?: string | null
+  description?: string | null
+}
+
+export function saveSplit(id: string, lines: SplitLineInput[]) {
+  return apiFetch<{ ok: boolean; lines: unknown[] }>(`/transactions/${id}/split`, {
+    method: 'PUT',
+    body: JSON.stringify({ lines }),
+  })
+}
+
+export function deleteSplit(id: string) {
+  return apiFetch<{ ok: boolean }>(`/transactions/${id}/split`, {
+    method: 'DELETE',
+  })
+}
+
+export interface AmazonSplitSuggestion {
+  lines: { amount: string; description: string; category_path: string | null }[]
+  order_ids: string[]
+}
+
+export function suggestAmazonSplit(id: string) {
+  return apiFetch<AmazonSplitSuggestion>(`/transactions/${id}/split/suggest-amazon`)
 }

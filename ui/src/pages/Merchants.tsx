@@ -841,6 +841,23 @@ export default function Merchants() {
         <h2 className="text-xl font-semibold">Merchants</h2>
         <div className="flex items-center gap-2">
           <button
+            onClick={() => {
+              fetch('/api/v1/merchants/export')
+                .then(r => r.blob())
+                .then(blob => {
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = 'merchants.csv'
+                  a.click()
+                  URL.revokeObjectURL(url)
+                })
+            }}
+            className="px-3 py-1.5 text-xs border border-border text-text-secondary rounded-md hover:text-text-primary hover:border-accent/30"
+          >
+            Export CSV
+          </button>
+          <button
             onClick={() => runCategorisation.mutate({ includeLlm: false })}
             disabled={runCategorisation.isPending}
             className="px-3 py-1.5 text-xs bg-accent/20 text-accent rounded-md hover:bg-accent/30 disabled:opacity-50"

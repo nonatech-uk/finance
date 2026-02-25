@@ -32,6 +32,8 @@ class TransactionItem(BaseModel):
     category_name: str | None = None
     category_type: str | None = None
     category_is_override: bool = False
+    merchant_is_override: bool = False
+    is_split: bool = False
     note: str | None = None
     tags: list[str] = []
 
@@ -77,6 +79,32 @@ class TagItem(BaseModel):
     source: str
 
 
+class SplitLineItem(BaseModel):
+    """A single line within a split transaction."""
+
+    id: UUID
+    line_number: int
+    amount: Decimal
+    currency: str
+    category_path: str | None = None
+    category_name: str | None = None
+    description: str | None = None
+
+
+class SplitLineInput(BaseModel):
+    """Input for a single split line."""
+
+    amount: Decimal
+    category_path: str | None = None
+    description: str | None = None
+
+
+class SplitRequest(BaseModel):
+    """Request body for creating/replacing a split."""
+
+    lines: list[SplitLineInput]
+
+
 class TransactionDetail(TransactionItem):
     """Full transaction detail including dedup and economic event info."""
 
@@ -86,6 +114,7 @@ class TransactionDetail(TransactionItem):
     tags: list[TagItem] = []  # type: ignore[assignment]
     dedup_group: DedupGroupInfo | None = None
     economic_event: EconomicEventInfo | None = None
+    split_lines: list[SplitLineItem] = []
 
 
 class NoteUpdate(BaseModel):
@@ -307,6 +336,32 @@ class DisplayRuleCreate(BaseModel):
     merge_group: bool = True
     category_hint: str | None = None
     priority: int = 100
+
+
+class SplitRuleItem(BaseModel):
+    id: int
+    merchant_pattern: str
+    amount_exact: Decimal | None = None
+    amount_min: Decimal | None = None
+    amount_max: Decimal | None = None
+    target_merchant_id: UUID
+    target_merchant_name: str | None = None
+    priority: int = 100
+    description: str | None = None
+
+
+class SplitRuleList(BaseModel):
+    items: list[SplitRuleItem]
+
+
+class SplitRuleCreate(BaseModel):
+    merchant_pattern: str
+    amount_exact: Decimal | None = None
+    amount_min: Decimal | None = None
+    amount_max: Decimal | None = None
+    target_merchant_id: UUID
+    priority: int = 100
+    description: str | None = None
 
 
 # ── Categories ────────────────────────────────────────────────────────────────
