@@ -25,6 +25,7 @@ def monthly_totals(
         "rt.currency = %(currency)s",
         "rt.posted_at >= (CURRENT_DATE - %(months)s * INTERVAL '1 month')",
         "(a.is_archived IS NOT TRUE)",
+        "(a.scope = 'personal' OR a.scope IS NULL)",
     ]
     params: dict = {"currency": currency, "months": months}
 
@@ -101,7 +102,7 @@ def overview(
         SELECT a.institution, a.account_ref,
                COALESCE(a.display_name, a.account_ref) AS label
         FROM account a
-        WHERE NOT a.is_archived
+        WHERE NOT a.is_archived AND (a.scope = 'personal' OR a.scope IS NULL)
         ORDER BY COALESCE(a.display_name, a.account_ref)
     """)
     accounts = [

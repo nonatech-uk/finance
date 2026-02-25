@@ -292,27 +292,25 @@ function CategoryManagePanel({
       {/* Delete */}
       <div className="space-y-1.5">
         <label className="text-xs text-text-secondary uppercase tracking-wider">Delete &amp; reassign to</label>
-        <div className="flex gap-2">
-          <select
-            value={reassignTo}
-            onChange={e => setReassignTo(e.target.value)}
-            className="flex-1 bg-bg-primary border border-border rounded px-2 py-1 text-sm text-text-primary focus:outline-none focus:border-accent"
-          >
-            <option value="">-- Select target --</option>
-            {allCategories
-              .filter(c => c.id !== cat.id && !c.path.startsWith(cat.full_path + ':'))
-              .map(c => (
-                <option key={c.id} value={c.id}>{c.path}</option>
-              ))}
-          </select>
-          <button
-            onClick={handleDelete}
-            disabled={deleteMutation.isPending || !reassignTo}
-            className="px-3 py-1 text-xs bg-red-600/20 text-red-400 rounded hover:bg-red-600/30 disabled:opacity-50"
-          >
-            {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
-          </button>
-        </div>
+        <select
+          value={reassignTo}
+          onChange={e => setReassignTo(e.target.value)}
+          className="w-full bg-bg-primary border border-border rounded px-2 py-1 text-sm text-text-primary focus:outline-none focus:border-accent"
+        >
+          <option value="">-- Select target --</option>
+          {allCategories
+            .filter(c => c.id !== cat.id && !c.path.startsWith(cat.full_path + ':'))
+            .map(c => (
+              <option key={c.id} value={c.id}>{c.path}</option>
+            ))}
+        </select>
+        <button
+          onClick={handleDelete}
+          disabled={deleteMutation.isPending || !reassignTo}
+          className="px-3 py-1 text-xs bg-red-600/20 text-red-400 rounded hover:bg-red-600/30 disabled:opacity-50"
+        >
+          {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+        </button>
         {deleteMutation.isSuccess && (
           <p className="text-xs text-green-400">
             Deleted. {deleteMutation.data.merchants_moved} merchants reassigned.

@@ -155,6 +155,43 @@ Design was validated against Unix Philosophy principles. Two areas needing activ
 
 ---
 
+## Account Scope
+
+The `account` table has a `scope TEXT DEFAULT 'personal'` column. Valid values: `personal`, `business`.
+
+**Purpose**: The Monzo business account (`acc_0000AvlkSBLkRzlxFfskfT`) is for company finances, which will eventually have its own Xero-replacement module with different categories, client tracking, and VAT handling. Rather than running a separate DB instance, scope keeps business data in the same database but hidden from personal finance views by default.
+
+**Filtering behaviour**:
+- All endpoints (transactions, stats, categories/spending, overview account dropdown) default to `scope = 'personal'`.
+- The `/accounts` endpoint accepts a `scope` query param (`personal` / `business` / null for all).
+- Business accounts are excluded from dashboard stats, category spending, and the transaction list unless explicitly requested.
+- `scope` is independent of `is_archived` — a business account is active, not archived.
+
+**Future**: The Xero-replacement module will query `scope = 'business'` and bring its own category tree, client dimension, and reporting.
+
+---
+
+## Display Rules (`merchant_display_rule`)
+
+Regex-based rules for bulk merchant renaming, merging, and categorisation. Managed via the Merchants page UI.
+
+| Column | Purpose |
+|--------|---------|
+| `pattern` | Python regex matched against `canonical_merchant.name` |
+| `display_name` | Set as `display_name` on matching merchants |
+| `merge_group` | If true, all matches are merged into one surviving merchant |
+| `category_hint` | Optional — sets `category_hint` on matching merchants |
+| `priority` | Lower = runs first. Tiebreaker is `id` |
+
+Key behaviours:
+- **Patterns are matched case-insensitively** (`re.IGNORECASE`). No need for `(?i)` prefix.
+- Patterns are applied with `re.match()` (anchored at start of string), not `re.search()`.
+- Rules are applied in `priority` order by `src/categorisation/engine.py` during the categorisation run.
+- When `merge_group` is true, the engine picks a surviving merchant (preferring one already named `display_name`) and merges all others into it.
+- CRUD via API: `GET/POST /merchants/rules`, `PUT/DELETE /merchants/rules/{id}`.
+
+---
+
 ## Future Extensions (Designed For, Not Yet Built)
 
 - **Xero sync**: Push categorised transactions to Xero for business accounting. One-way only - this system is source of truth. Tag-driven (`xero-reimbursable` etc.)

@@ -3,6 +3,7 @@ import type { MerchantList, MerchantDetail, CategorySuggestionList, DisplayRuleL
 
 export interface MerchantFilters {
   search?: string
+  search_aliases?: boolean
   unmapped?: boolean
   has_suggestions?: boolean
   last_used_after?: string
@@ -56,6 +57,13 @@ export function bulkMergeMerchants(merchantIds: string[], displayName?: string) 
   )
 }
 
+export function splitAlias(merchantId: string, alias: string) {
+  return apiFetch<{ original_merchant_id: string; new_merchant_id: string; alias: string }>(
+    `/merchants/${merchantId}/split-alias`,
+    { method: 'POST', body: JSON.stringify({ alias }) }
+  )
+}
+
 export function fetchSuggestions(status = 'pending', limit = 50) {
   return apiFetch<CategorySuggestionList>(`/merchants/suggestions?status=${status}&limit=${limit}`)
 }
@@ -88,6 +96,13 @@ export function fetchRules() {
 export function createRule(rule: Omit<DisplayRule, 'id'>) {
   return apiFetch<DisplayRule>('/merchants/rules', {
     method: 'POST',
+    body: JSON.stringify(rule),
+  })
+}
+
+export function updateRule(id: number, rule: Omit<DisplayRule, 'id'>) {
+  return apiFetch<DisplayRule>(`/merchants/rules/${id}`, {
+    method: 'PUT',
     body: JSON.stringify(rule),
   })
 }

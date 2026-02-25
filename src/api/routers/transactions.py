@@ -34,7 +34,10 @@ router = APIRouter()
 @router.get("/transactions", response_model=TransactionList)
 def list_transactions(
     cursor: str | None = Query(None, description="Cursor for pagination (posted_at,id)"),
+    offset: int | None = Query(None, ge=0, description="Offset pagination (non-date sorts)"),
     limit: int = Query(50, ge=1, le=200),
+    sort_by: str = Query("posted_at", description="Sort column"),
+    sort_dir: str = Query("desc", description="Sort direction"),
     institution: str | None = None,
     account_ref: str | None = None,
     source: str | None = None,
@@ -51,18 +54,32 @@ def list_transactions(
     """List deduplicated transactions with full merchant/category chain."""
     cur = conn.cursor()
 
+    # Sort column mapping
+    sort_columns = {
+        "posted_at": "rt.posted_at",
+        "merchant": "COALESCE(cm.display_name, cm.name)",
+        "category": "COALESCE(tcat.full_path, cat.full_path)",
+        "amount": "rt.amount",
+        "source": "rt.source",
+    }
+    sort_col = sort_columns.get(sort_by, "rt.posted_at")
+    if sort_dir not in ("asc", "desc"):
+        sort_dir = "desc"
+    use_keyset = sort_by == "posted_at"
+
     # Build WHERE clauses
     conditions = []
     params: dict = {"limit": limit + 1}  # fetch one extra to detect has_more
 
-    # Keyset pagination: cursor is "posted_at,id"
-    if cursor:
+    # Keyset pagination: cursor is "posted_at,id" (only for date sort)
+    if cursor and use_keyset:
         try:
             cursor_date_str, cursor_id = cursor.split(",", 1)
             params["cursor_date"] = cursor_date_str
             params["cursor_id"] = cursor_id
+            op = "<" if sort_dir == "desc" else ">"
             conditions.append(
-                "(rt.posted_at, rt.id) < (%(cursor_date)s::date, %(cursor_id)s::uuid)"
+                f"(rt.posted_at, rt.id) {op} (%(cursor_date)s::date, %(cursor_id)s::uuid)"
             )
         except ValueError:
             raise HTTPException(400, "Invalid cursor format, expected 'date,uuid'")
@@ -108,8 +125,9 @@ def list_transactions(
         )
         params["tag"] = tag
 
-    # Always exclude archived accounts
+    # Always exclude archived and business accounts by default
     conditions.append("(a.is_archived IS NOT TRUE)")
+    conditions.append("(a.scope = 'personal' OR a.scope IS NULL)")
 
     where = "WHERE " + " AND ".join(conditions)
 
@@ -138,9 +156,12 @@ def list_transactions(
         LEFT JOIN category tcat ON tcat.full_path = tco.category_path
         LEFT JOIN transaction_note tn ON tn.raw_transaction_id = rt.id
         {where}
-        ORDER BY rt.posted_at DESC, rt.id DESC
+        ORDER BY {sort_col} {sort_dir} NULLS LAST, rt.id {sort_dir}
         LIMIT %(limit)s
+        {"OFFSET %(offset)s" if not use_keyset and offset is not None else ""}
     """
+    if not use_keyset and offset is not None:
+        params["offset"] = offset
 
     cur.execute(sql, params)
     columns = [desc[0] for desc in cur.description]
@@ -166,7 +187,7 @@ def list_transactions(
             item.tags = tags_by_txn.get(str(item.id), [])
 
     next_cursor = None
-    if has_more and items:
+    if has_more and items and use_keyset:
         last = items[-1]
         next_cursor = f"{last.posted_at},{last.id}"
 

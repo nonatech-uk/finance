@@ -101,6 +101,7 @@ export interface AccountItem {
   is_active: boolean | null
   is_archived: boolean
   exclude_from_reports: boolean
+  scope: string
 }
 
 export interface AccountList {
@@ -111,6 +112,7 @@ export interface AccountUpdate {
   display_name?: string | null
   is_archived?: boolean
   exclude_from_reports?: boolean
+  scope?: string
 }
 
 export interface AccountDetailResponse {
@@ -128,6 +130,7 @@ export interface AccountDetailResponse {
     is_active: boolean | null
     is_archived: boolean
     exclude_from_reports: boolean
+    scope: string
   }
   recent_transactions: TransactionItem[]
 }

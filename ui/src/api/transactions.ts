@@ -3,7 +3,10 @@ import type { TransactionList, TransactionDetail, BulkOperationResult, BulkMerch
 
 export interface TransactionFilters {
   cursor?: string
+  offset?: number
   limit?: number
+  sort_by?: string
+  sort_dir?: 'asc' | 'desc'
   institution?: string
   account_ref?: string
   source?: string

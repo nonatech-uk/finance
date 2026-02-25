@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   useMerchants,
   useUpdateMerchantMapping,
@@ -8,9 +8,11 @@ import {
   useReviewSuggestion,
   useRunCategorisation,
   useMergeMerchant,
+  useSplitAlias,
   useBulkMergeMerchants,
   useDisplayRules,
   useCreateRule,
+  useUpdateRule,
   useDeleteRule,
 } from '../hooks/useMerchants'
 import { useCategories } from '../hooks/useCategories'
@@ -176,6 +178,7 @@ function MerchantSlideOver({
   const nameMutation = useUpdateMerchantName()
   const mappingMutation = useUpdateMerchantMapping()
   const mergeMutation = useMergeMerchant()
+  const splitMutation = useSplitAlias()
   const [displayName, setDisplayName] = useState('')
   const [mergeSearch, setMergeSearch] = useState('')
   const [showMerge, setShowMerge] = useState(false)
@@ -254,7 +257,23 @@ function MerchantSlideOver({
           </label>
           <div className="space-y-1 max-h-40 overflow-y-auto">
             {data.aliases.map(a => (
-              <div key={a} className="text-xs text-text-secondary bg-bg-card rounded px-2 py-1">{a}</div>
+              <div key={a} className="flex items-center gap-1 text-xs text-text-secondary bg-bg-card rounded px-2 py-1">
+                <span className="flex-1 truncate">{a}</span>
+                {data.aliases.length > 1 && (
+                  <button
+                    onClick={() => {
+                      if (confirm(`Split "${a}" into its own merchant?`)) {
+                        splitMutation.mutate({ merchantId, alias: a })
+                      }
+                    }}
+                    disabled={splitMutation.isPending}
+                    className="shrink-0 text-text-secondary hover:text-red-400 transition-colors disabled:opacity-50"
+                    title="Split into separate merchant"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         </div>
@@ -330,12 +349,70 @@ function MerchantSlideOver({
 
 // ── Display Rules Panel ──
 
+function RuleSortHeader({
+  label, sortKey, currentSort, currentDir, onSort,
+}: {
+  label: string
+  sortKey: string
+  currentSort: string
+  currentDir: 'asc' | 'desc'
+  onSort: (key: string) => void
+}) {
+  const isActive = currentSort === sortKey
+  const arrow = isActive ? (currentDir === 'asc' ? ' ▲' : ' ▼') : ''
+  return (
+    <th
+      className="pb-1 pr-2 cursor-pointer hover:text-accent select-none"
+      onClick={() => onSort(sortKey)}
+    >
+      {label}{arrow}
+    </th>
+  )
+}
+
 function DisplayRulesPanel({ categoryOptions }: { categoryOptions: CategoryOption[] }) {
   const { data, isLoading } = useDisplayRules()
   const createMutation = useCreateRule()
+  const updateMutation = useUpdateRule()
   const deleteMutation = useDeleteRule()
   const [showForm, setShowForm] = useState(false)
   const [expanded, setExpanded] = useState(false)
+  const [ruleSortBy, setRuleSortBy] = useState('priority')
+  const [ruleSortDir, setRuleSortDir] = useState<'asc' | 'desc'>('asc')
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const editingIdRef = useRef(editingId)
+  const editStateRef = useRef<{ pattern: string; display_name: string; merge_group: boolean; category_hint: string | null; priority: number }>({ pattern: '', display_name: '', merge_group: true, category_hint: null, priority: 100 })
+
+  const [editState, setEditState] = useState({
+    pattern: '',
+    display_name: '',
+    merge_group: true,
+    category_hint: '' as string | null,
+    priority: 100,
+  })
+
+  // Keep refs in sync
+  editingIdRef.current = editingId
+  editStateRef.current = editState
+
+  useEffect(() => {
+    if (editingId === null) return
+    const handler = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        const id = editingIdRef.current
+        const state = editStateRef.current
+        if (id !== null && state.pattern && state.display_name) {
+          updateMutation.mutate(
+            { id, rule: { ...state, category_hint: state.category_hint || null } },
+          )
+        }
+        setEditingId(null)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [editingId])
   const [newRule, setNewRule] = useState({
     pattern: '',
     display_name: '',
@@ -344,24 +421,85 @@ function DisplayRulesPanel({ categoryOptions }: { categoryOptions: CategoryOptio
     priority: 100,
   })
 
+  const saveCurrentEdit = () => {
+    const id = editingIdRef.current
+    const state = editStateRef.current
+    if (id !== null && state.pattern && state.display_name) {
+      updateMutation.mutate(
+        { id, rule: { ...state, category_hint: state.category_hint || null } },
+      )
+    }
+  }
+
+  const startEdit = (r: { id: number; pattern: string; display_name: string; merge_group: boolean; category_hint: string | null; priority: number }) => {
+    if (editingId !== null && editingId !== r.id) {
+      saveCurrentEdit()
+    }
+    setEditingId(r.id)
+    setEditState({
+      pattern: r.pattern,
+      display_name: r.display_name,
+      merge_group: r.merge_group,
+      category_hint: r.category_hint || '',
+      priority: r.priority,
+    })
+  }
+
+  const handleSaveEdit = () => {
+    if (editingId === null || !editState.pattern || !editState.display_name) return
+    updateMutation.mutate(
+      { id: editingId, rule: { ...editState, category_hint: editState.category_hint || null } },
+    )
+    setEditingId(null)
+  }
+
   const handleCreate = () => {
     if (!newRule.pattern || !newRule.display_name) return
     createMutation.mutate(
       { ...newRule, category_hint: newRule.category_hint || null },
       {
-        onSuccess: () => {
+        onSettled: () => {
           setNewRule({ pattern: '', display_name: '', merge_group: true, category_hint: '', priority: 100 })
           setShowForm(false)
+          setEditingId(null)
         },
       }
     )
   }
 
-  if (isLoading) return null
   const rules = data?.items || []
 
+  const handleRuleSort = (key: string) => {
+    if (ruleSortBy === key) {
+      setRuleSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setRuleSortBy(key)
+      setRuleSortDir('asc')
+    }
+  }
+
+  const sortedRules = useMemo(() => {
+    const sorted = [...rules]
+    const dir = ruleSortDir === 'asc' ? 1 : -1
+    sorted.sort((a, b) => {
+      switch (ruleSortBy) {
+        case 'pattern': return dir * a.pattern.localeCompare(b.pattern)
+        case 'display_name': return dir * a.display_name.localeCompare(b.display_name)
+        case 'category': return dir * (a.category_hint || '').localeCompare(b.category_hint || '')
+        case 'merge': return dir * (Number(a.merge_group) - Number(b.merge_group))
+        case 'priority': return dir * (a.priority - b.priority)
+        default: return 0
+      }
+    })
+    return sorted
+  }, [rules, ruleSortBy, ruleSortDir])
+
+  if (isLoading) return null
+
+  const inputClass = "w-full bg-bg-card border border-border rounded px-2 py-1 text-xs text-text-primary focus:outline-none focus:border-accent"
+
   return (
-    <div className="bg-bg-card border border-border rounded-lg p-4 space-y-3">
+    <div ref={panelRef} className="bg-bg-card border border-border rounded-lg p-4 space-y-3">
       <div className="flex items-center justify-between">
         <button
           onClick={() => setExpanded(!expanded)}
@@ -372,7 +510,7 @@ function DisplayRulesPanel({ categoryOptions }: { categoryOptions: CategoryOptio
         </button>
         {expanded && (
           <button
-            onClick={() => setShowForm(!showForm)}
+            onClick={() => { if (editingId !== null) saveCurrentEdit(); setShowForm(!showForm); setEditingId(null) }}
             className="px-2 py-1 text-xs bg-accent/20 text-accent rounded hover:bg-accent/30"
           >
             {showForm ? 'Cancel' : '+ New Rule'}
@@ -392,7 +530,7 @@ function DisplayRulesPanel({ categoryOptions }: { categoryOptions: CategoryOptio
                     value={newRule.pattern}
                     onChange={e => setNewRule(r => ({ ...r, pattern: e.target.value }))}
                     placeholder=".*T ROWE P.*"
-                    className="w-full bg-bg-card border border-border rounded px-2 py-1 text-sm text-text-primary font-mono focus:outline-none focus:border-accent"
+                    className={`${inputClass} font-mono`}
                   />
                 </div>
                 <div>
@@ -402,7 +540,7 @@ function DisplayRulesPanel({ categoryOptions }: { categoryOptions: CategoryOptio
                     value={newRule.display_name}
                     onChange={e => setNewRule(r => ({ ...r, display_name: e.target.value }))}
                     placeholder="T. Rowe Price"
-                    className="w-full bg-bg-card border border-border rounded px-2 py-1 text-sm text-text-primary focus:outline-none focus:border-accent"
+                    className={inputClass}
                   />
                 </div>
               </div>
@@ -413,7 +551,7 @@ function DisplayRulesPanel({ categoryOptions }: { categoryOptions: CategoryOptio
                     value={newRule.category_hint || ''}
                     onChange={v => setNewRule(r => ({ ...r, category_hint: v || null }))}
                     options={categoryOptions}
-                    className="w-full bg-bg-card border border-border rounded px-2 py-1 text-xs text-text-primary focus:outline-none focus:border-accent"
+                    className={inputClass}
                   />
                 </div>
                 <div>
@@ -422,7 +560,7 @@ function DisplayRulesPanel({ categoryOptions }: { categoryOptions: CategoryOptio
                     type="number"
                     value={newRule.priority}
                     onChange={e => setNewRule(r => ({ ...r, priority: parseInt(e.target.value) || 100 }))}
-                    className="w-full bg-bg-card border border-border rounded px-2 py-1 text-sm text-text-primary focus:outline-none focus:border-accent"
+                    className={inputClass}
                   />
                 </div>
                 <div className="flex items-end gap-2">
@@ -451,17 +589,81 @@ function DisplayRulesPanel({ categoryOptions }: { categoryOptions: CategoryOptio
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-text-secondary text-left uppercase tracking-wider">
-                  <th className="pb-1 pr-2">Pattern</th>
-                  <th className="pb-1 pr-2">Display Name</th>
-                  <th className="pb-1 pr-2">Category</th>
-                  <th className="pb-1 pr-2">Merge</th>
-                  <th className="pb-1 pr-2">Priority</th>
+                  <RuleSortHeader label="Pattern" sortKey="pattern" currentSort={ruleSortBy} currentDir={ruleSortDir} onSort={handleRuleSort} />
+                  <RuleSortHeader label="Display Name" sortKey="display_name" currentSort={ruleSortBy} currentDir={ruleSortDir} onSort={handleRuleSort} />
+                  <RuleSortHeader label="Category" sortKey="category" currentSort={ruleSortBy} currentDir={ruleSortDir} onSort={handleRuleSort} />
+                  <RuleSortHeader label="Merge" sortKey="merge" currentSort={ruleSortBy} currentDir={ruleSortDir} onSort={handleRuleSort} />
+                  <RuleSortHeader label="Priority" sortKey="priority" currentSort={ruleSortBy} currentDir={ruleSortDir} onSort={handleRuleSort} />
                   <th className="pb-1"></th>
                 </tr>
               </thead>
               <tbody>
-                {rules.map(r => (
-                  <tr key={r.id} className="border-t border-border/50">
+                {sortedRules.map(r => editingId === r.id ? (
+                  <tr key={r.id} className="border-t border-accent/30 bg-accent/5">
+                    <td className="py-1.5 pr-2">
+                      <input
+                        type="text"
+                        value={editState.pattern}
+                        onChange={e => setEditState(s => ({ ...s, pattern: e.target.value }))}
+                        className={`${inputClass} font-mono`}
+                      />
+                    </td>
+                    <td className="py-1.5 pr-2">
+                      <input
+                        type="text"
+                        value={editState.display_name}
+                        onChange={e => setEditState(s => ({ ...s, display_name: e.target.value }))}
+                        className={inputClass}
+                      />
+                    </td>
+                    <td className="py-1.5 pr-2">
+                      <CategorySelect
+                        value={editState.category_hint || ''}
+                        onChange={v => setEditState(s => ({ ...s, category_hint: v || null }))}
+                        options={categoryOptions}
+                        className={inputClass}
+                      />
+                    </td>
+                    <td className="py-1.5 pr-2">
+                      <input
+                        type="checkbox"
+                        checked={editState.merge_group}
+                        onChange={e => setEditState(s => ({ ...s, merge_group: e.target.checked }))}
+                        className="accent-accent"
+                      />
+                    </td>
+                    <td className="py-1.5 pr-2">
+                      <input
+                        type="number"
+                        value={editState.priority}
+                        onChange={e => setEditState(s => ({ ...s, priority: parseInt(e.target.value) || 0 }))}
+                        className={`${inputClass} w-16`}
+                      />
+                    </td>
+                    <td className="py-1.5">
+                      <div className="flex gap-1">
+                        <button
+                          onClick={handleSaveEdit}
+                          disabled={updateMutation.isPending || !editState.pattern || !editState.display_name}
+                          className="text-green-400 hover:text-green-300 disabled:opacity-50"
+                        >
+                          {updateMutation.isPending ? '...' : '✓'}
+                        </button>
+                        <button
+                          onClick={() => setEditingId(null)}
+                          className="text-text-secondary hover:text-text-primary"
+                        >
+                          ✗
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  <tr
+                    key={r.id}
+                    className="border-t border-border/50 hover:bg-bg-hover cursor-pointer"
+                    onClick={() => startEdit(r)}
+                  >
                     <td className="py-1.5 pr-2 font-mono text-accent">{r.pattern}</td>
                     <td className="py-1.5 pr-2">{r.display_name}</td>
                     <td className="py-1.5 pr-2 text-text-secondary">{r.category_hint || '—'}</td>
@@ -469,7 +671,7 @@ function DisplayRulesPanel({ categoryOptions }: { categoryOptions: CategoryOptio
                     <td className="py-1.5 pr-2 text-text-secondary">{r.priority}</td>
                     <td className="py-1.5">
                       <button
-                        onClick={() => { if (confirm(`Delete rule "${r.pattern}"?`)) deleteMutation.mutate(r.id) }}
+                        onClick={e => { e.stopPropagation(); if (confirm(`Delete rule "${r.pattern}"?`)) deleteMutation.mutate(r.id) }}
                         disabled={deleteMutation.isPending}
                         className="text-red-400 hover:text-red-300"
                       >
@@ -493,6 +695,7 @@ export default function Merchants() {
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [unmapped, setUnmapped] = useState(false)
+  const [searchAliases, setSearchAliases] = useState(false)
   const [selectedMerchantId, setSelectedMerchantId] = useState<string | null>(null)
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -519,11 +722,12 @@ export default function Merchants() {
   const filters = useMemo(() => ({
     limit: 100,
     search: debouncedSearch || undefined,
+    search_aliases: (debouncedSearch && searchAliases) || undefined,
     unmapped: unmapped || undefined,
     last_used_after: lastUsedAfter,
     sort_by: sortBy,
     sort_dir: sortDir,
-  }), [debouncedSearch, unmapped, lastUsedAfter, sortBy, sortDir])
+  }), [debouncedSearch, searchAliases, unmapped, lastUsedAfter, sortBy, sortDir])
 
   const handleSort = (key: string) => {
     if (sortBy === key) {
@@ -604,6 +808,15 @@ export default function Merchants() {
           onChange={e => setSearch(e.target.value)}
           className="bg-bg-card border border-border rounded-md px-3 py-1.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent w-64"
         />
+        <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
+          <input
+            type="checkbox"
+            checked={searchAliases}
+            onChange={e => setSearchAliases(e.target.checked)}
+            className="accent-accent"
+          />
+          Include aliases
+        </label>
         <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
           <input
             type="checkbox"

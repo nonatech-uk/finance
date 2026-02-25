@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.api.deps import get_conn
 from src.api.models import (
+    AliasSplitRequest,
     BulkMerchantMerge,
     CategorySuggestionItem,
     CategorySuggestionList,
@@ -29,6 +30,7 @@ router = APIRouter()
 @router.get("/merchants", response_model=MerchantList)
 def list_merchants(
     search: str | None = Query(None, description="Search merchant name"),
+    search_aliases: bool = Query(False, description="Also search in raw merchant aliases"),
     unmapped: bool = Query(False, description="Only show merchants without category"),
     has_suggestions: bool = Query(False, description="Only show merchants with pending suggestions"),
     last_used_after: date | None = Query(None, description="Only merchants with transactions on or after this date"),
@@ -68,7 +70,10 @@ def list_merchants(
             SELECT 1 FROM merchant_raw_mapping mrm2
             JOIN cleaned_transaction ct2 ON ct2.cleaned_merchant = mrm2.cleaned_merchant
             JOIN active_transaction at2 ON at2.id = ct2.raw_transaction_id
-            WHERE mrm2.canonical_merchant_id = cm.id {date_clause}
+            JOIN account acct ON acct.institution = at2.institution AND acct.account_ref = at2.account_ref
+            WHERE mrm2.canonical_merchant_id = cm.id
+              AND (acct.scope = 'personal' OR acct.scope IS NULL)
+              {date_clause}
         )""",
     ]
     params: dict = {"limit": limit + 1}
@@ -78,7 +83,13 @@ def list_merchants(
         params["last_used_before"] = last_used_before
 
     if search:
-        conditions.append("(cm.name ILIKE %(search)s OR cm.display_name ILIKE %(search)s)")
+        if search_aliases:
+            conditions.append("""(cm.name ILIKE %(search)s OR cm.display_name ILIKE %(search)s
+                OR EXISTS (SELECT 1 FROM merchant_raw_mapping mrm3
+                           WHERE mrm3.canonical_merchant_id = cm.id
+                             AND mrm3.cleaned_merchant ILIKE %(search)s))""")
+        else:
+            conditions.append("(cm.name ILIKE %(search)s OR cm.display_name ILIKE %(search)s)")
         params["search"] = f"%{search}%"
     if unmapped:
         conditions.append("cm.category_hint IS NULL")
@@ -93,12 +104,12 @@ def list_merchants(
     sort_col_sql = VALID_SORT_COLUMNS[sort_by]
 
     if sort_by == "name":
-        # Keyset pagination on name
+        # Keyset pagination on display name (falling back to raw name)
         if cursor:
             op = ">" if sort_dir == "asc" else "<"
-            conditions.append(f"cm.name {op} %(cursor)s")
+            conditions.append(f"COALESCE(cm.display_name, cm.name) {op} %(cursor)s")
             params["cursor"] = cursor
-        order_clause = f"ORDER BY cm.name {direction}"
+        order_clause = f"ORDER BY COALESCE(cm.display_name, cm.name) {direction}"
         pagination_clause = "LIMIT %(limit)s"
     else:
         # Offset pagination for other columns
@@ -138,7 +149,8 @@ def list_merchants(
 
     next_cursor = None
     if has_more and items and sort_by == "name":
-        next_cursor = items[-1].name
+        last = items[-1]
+        next_cursor = last.display_name or last.name
 
     return MerchantList(items=items, next_cursor=next_cursor, has_more=has_more)
 
@@ -152,13 +164,15 @@ def list_suggestions(
     """List category suggestions for review."""
     cur = conn.cursor()
 
-    # Only show suggestions for merchants that have active transactions
+    # Only show suggestions for merchants that have active personal transactions
     active_merchant_filter = """
         EXISTS (
             SELECT 1 FROM merchant_raw_mapping mrm
             JOIN cleaned_transaction ct ON ct.cleaned_merchant = mrm.cleaned_merchant
             JOIN active_transaction at2 ON at2.id = ct.raw_transaction_id
+            JOIN account acct ON acct.institution = at2.institution AND acct.account_ref = at2.account_ref
             WHERE mrm.canonical_merchant_id = cm.id
+              AND (acct.scope = 'personal' OR acct.scope IS NULL)
         )
     """
 
@@ -275,6 +289,28 @@ def create_rule(body: DisplayRuleCreate, conn=Depends(get_conn)):
     return DisplayRuleItem(id=rule_id, **body.model_dump())
 
 
+@router.put("/merchants/rules/{rule_id}", response_model=DisplayRuleItem)
+def update_rule(rule_id: int, body: DisplayRuleCreate, conn=Depends(get_conn)):
+    """Update an existing merchant display rule."""
+    import re
+    try:
+        re.compile(body.pattern)
+    except re.error as e:
+        raise HTTPException(400, f"Invalid regex: {e}")
+
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE merchant_display_rule
+        SET pattern = %s, display_name = %s, merge_group = %s, category_hint = %s, priority = %s
+        WHERE id = %s
+    """, (body.pattern, body.display_name, body.merge_group, body.category_hint, body.priority, rule_id))
+    if cur.rowcount == 0:
+        raise HTTPException(404, "Rule not found")
+    conn.commit()
+
+    return DisplayRuleItem(id=rule_id, **body.model_dump())
+
+
 @router.delete("/merchants/rules/{rule_id}")
 def delete_rule(rule_id: int, conn=Depends(get_conn)):
     """Delete a merchant display rule."""
@@ -318,14 +354,16 @@ def get_merchant(
     """, (str(merchant_id),))
     aliases = [r[0] for r in cur.fetchall()]
 
-    # Get recent transactions for this merchant
+    # Get recent transactions for this merchant (personal scope only)
     cur.execute("""
         SELECT rt.id, rt.posted_at, rt.amount, rt.currency, rt.raw_merchant,
                rt.source, rt.institution, rt.account_ref
         FROM merchant_raw_mapping mrm
         JOIN cleaned_transaction ct ON ct.cleaned_merchant = mrm.cleaned_merchant
-        JOIN raw_transaction rt ON rt.id = ct.raw_transaction_id
+        JOIN active_transaction rt ON rt.id = ct.raw_transaction_id
+        JOIN account acct ON acct.institution = rt.institution AND acct.account_ref = rt.account_ref
         WHERE mrm.canonical_merchant_id = %s
+          AND (acct.scope = 'personal' OR acct.scope IS NULL)
         ORDER BY rt.posted_at DESC
         LIMIT 20
     """, (str(merchant_id),))
@@ -469,6 +507,100 @@ def merge_merchant(
         "surviving_id": str(merchant_id),
         "merged_from_id": str(body.merge_from_id),
         **result,
+    }
+
+
+@router.post("/merchants/{merchant_id}/split-alias")
+def split_alias(
+    merchant_id: UUID,
+    body: AliasSplitRequest,
+    conn=Depends(get_conn),
+):
+    """Split a single alias off from this merchant into its own canonical_merchant."""
+    cur = conn.cursor()
+
+    # 1. Verify merchant exists and is not merged
+    cur.execute(
+        "SELECT id FROM canonical_merchant WHERE id = %s AND merged_into_id IS NULL",
+        (str(merchant_id),),
+    )
+    if not cur.fetchone():
+        raise HTTPException(404, "Merchant not found or already merged")
+
+    # 2. Verify alias belongs to this merchant
+    cur.execute(
+        "SELECT cleaned_merchant FROM merchant_raw_mapping WHERE canonical_merchant_id = %s AND cleaned_merchant = %s",
+        (str(merchant_id), body.alias),
+    )
+    if not cur.fetchone():
+        raise HTTPException(404, "Alias not found on this merchant")
+
+    # 3. Must keep at least one alias
+    cur.execute(
+        "SELECT count(*) FROM merchant_raw_mapping WHERE canonical_merchant_id = %s",
+        (str(merchant_id),),
+    )
+    if cur.fetchone()[0] <= 1:
+        raise HTTPException(400, "Cannot split the only alias from a merchant")
+
+    # 4. Create new canonical_merchant (or reuse existing with same name)
+    #    Use a unique name to avoid colliding with the source merchant
+    new_name = body.alias
+    cur.execute("SELECT id FROM canonical_merchant WHERE name = %s", (new_name,))
+    existing = cur.fetchone()
+    if existing and str(existing[0]) == str(merchant_id):
+        # The alias name matches the source merchant's name — use a suffixed name
+        new_name = f"{body.alias} (split)"
+
+    cur.execute(
+        "INSERT INTO canonical_merchant (name) VALUES (%s) ON CONFLICT (name) DO NOTHING RETURNING id",
+        (new_name,),
+    )
+    result = cur.fetchone()
+    if result:
+        new_id = str(result[0])
+    else:
+        cur.execute("SELECT id FROM canonical_merchant WHERE name = %s", (new_name,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(500, "Failed to create or find canonical merchant")
+        new_id = str(row[0])
+        # Reactivate if it was previously merged
+        cur.execute(
+            "UPDATE canonical_merchant SET merged_into_id = NULL WHERE id = %s",
+            (new_id,),
+        )
+
+    # 5. Reassign the mapping
+    cur.execute(
+        "UPDATE merchant_raw_mapping SET canonical_merchant_id = %s WHERE cleaned_merchant = %s",
+        (new_id, body.alias),
+    )
+
+    # 6. If the split alias was the merchant's name, update name to display_name or a remaining alias
+    cur.execute("SELECT name, display_name FROM canonical_merchant WHERE id = %s", (str(merchant_id),))
+    cm_name, cm_display = cur.fetchone()
+    if cm_name == body.alias:
+        # Pick the best replacement: display_name first, then first remaining alias
+        if cm_display:
+            new_cm_name = cm_display
+        else:
+            cur.execute(
+                "SELECT cleaned_merchant FROM merchant_raw_mapping WHERE canonical_merchant_id = %s ORDER BY cleaned_merchant LIMIT 1",
+                (str(merchant_id),),
+            )
+            new_cm_name = cur.fetchone()[0]
+        cur.execute(
+            "UPDATE canonical_merchant SET name = %s WHERE id = %s",
+            (new_cm_name, str(merchant_id)),
+        )
+
+    conn.commit()
+
+    return {
+        "original_merchant_id": str(merchant_id),
+        "new_merchant_id": new_id,
+        "alias": body.alias,
     }
 
 

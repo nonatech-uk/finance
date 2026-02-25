@@ -85,6 +85,7 @@ def spending_by_category(
         "rt.posted_at <= %(date_to)s",
         "rt.currency = %(currency)s",
         "(acct.exclude_from_reports IS NOT TRUE)",
+        "(acct.scope = 'personal' OR acct.scope IS NULL)",
     ]
     params: dict = {
         "date_from": date_from,

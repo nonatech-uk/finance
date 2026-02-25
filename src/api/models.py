@@ -171,6 +171,7 @@ class AccountItem(BaseModel):
     is_active: bool = True
     is_archived: bool = False
     exclude_from_reports: bool = False
+    scope: str = "personal"
     transaction_count: int = 0
     earliest_date: date | None = None
     latest_date: date | None = None
@@ -187,6 +188,7 @@ class AccountUpdate(BaseModel):
     display_name: str | None = None
     is_archived: bool | None = None
     exclude_from_reports: bool | None = None
+    scope: str | None = None
 
 
 # ── Merchants ─────────────────────────────────────────────────────────────────
@@ -254,6 +256,12 @@ class BulkMerchantMerge(BaseModel):
 
     merchant_ids: list[UUID]
     display_name: str | None = None
+
+
+class AliasSplitRequest(BaseModel):
+    """Split a single alias off into its own merchant."""
+
+    alias: str
 
 
 class CategorySuggestionItem(BaseModel):

@@ -11,6 +11,7 @@ router = APIRouter()
 @router.get("/accounts")
 def list_accounts(
     include_archived: bool = Query(False, description="Include archived accounts"),
+    scope: str | None = Query("personal", description="Filter by scope (personal/business/null for all)"),
     conn=Depends(get_conn),
 ):
     """List all accounts derived from transaction data, with summaries.
@@ -20,9 +21,11 @@ def list_accounts(
     """
     cur = conn.cursor()
 
-    archive_filter = ""
+    extra_filters = ""
     if not include_archived:
-        archive_filter = "AND (a.is_archived IS NOT TRUE)"
+        extra_filters += " AND (a.is_archived IS NOT TRUE)"
+    if scope and scope in ("personal", "business"):
+        extra_filters += f" AND (a.scope = '{scope}')"
 
     cur.execute(f"""
         SELECT
@@ -38,15 +41,16 @@ def list_accounts(
             a.account_type,
             a.is_active,
             a.is_archived,
-            a.exclude_from_reports
+            a.exclude_from_reports,
+            a.scope
         FROM active_transaction rt
         LEFT JOIN account a
             ON a.institution = rt.institution
             AND a.account_ref = rt.account_ref
-        WHERE 1=1 {archive_filter}
+        WHERE 1=1 {extra_filters}
         GROUP BY rt.institution, rt.account_ref, rt.currency,
                  a.name, a.display_name, a.account_type, a.is_active,
-                 a.is_archived, a.exclude_from_reports
+                 a.is_archived, a.exclude_from_reports, a.scope
         ORDER BY rt.institution, rt.account_ref
     """)
 
@@ -92,14 +96,15 @@ def get_account_detail(
             a.account_type,
             a.is_active,
             a.is_archived,
-            a.exclude_from_reports
+            a.exclude_from_reports,
+            a.scope
         FROM active_transaction rt
         LEFT JOIN account a
             ON a.institution = rt.institution
             AND a.account_ref = rt.account_ref
         WHERE rt.institution = %s AND rt.account_ref = %s
         GROUP BY rt.currency, a.name, a.display_name, a.account_type,
-                 a.is_active, a.is_archived, a.exclude_from_reports
+                 a.is_active, a.is_archived, a.exclude_from_reports, a.scope
     """, (institution, account_ref))
 
     summary_row = cur.fetchone()
@@ -165,6 +170,10 @@ def update_account(
         updates["is_archived"] = body.is_archived
     if body.exclude_from_reports is not None:
         updates["exclude_from_reports"] = body.exclude_from_reports
+    if body.scope is not None:
+        if body.scope not in ("personal", "business"):
+            raise HTTPException(400, "scope must be 'personal' or 'business'")
+        updates["scope"] = body.scope
 
     if not updates:
         raise HTTPException(400, "No fields to update")
@@ -211,7 +220,7 @@ def update_account(
     # Return updated row
     cur.execute("""
         SELECT institution, account_ref, name, display_name, currency,
-               account_type, is_active, is_archived, exclude_from_reports
+               account_type, is_active, is_archived, exclude_from_reports, scope
         FROM account
         WHERE institution = %s AND account_ref = %s
     """, (institution, account_ref))

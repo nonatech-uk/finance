@@ -9,6 +9,28 @@ import LoadingSpinner from '../components/common/LoadingSpinner'
 import JsonViewer from '../components/common/JsonViewer'
 import type { TransactionItem, TransactionDetail, CategoryItem, TagItem } from '../api/types'
 
+function SortableHeader({
+  label, sortKey, currentSort, currentDir, onSort, align = 'left',
+}: {
+  label: string
+  sortKey: string
+  currentSort: string
+  currentDir: 'asc' | 'desc'
+  onSort: (key: string) => void
+  align?: 'left' | 'right'
+}) {
+  const isActive = currentSort === sortKey
+  const arrow = isActive ? (currentDir === 'asc' ? ' ▲' : ' ▼') : ''
+  return (
+    <th
+      className={`pb-2 pr-4 cursor-pointer hover:text-accent select-none ${align === 'right' ? 'text-right' : ''}`}
+      onClick={() => onSort(sortKey)}
+    >
+      {label}{arrow}
+    </th>
+  )
+}
+
 export default function Transactions() {
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
@@ -17,8 +39,12 @@ export default function Transactions() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [amountMin, setAmountMin] = useState('')
+  const [amountMax, setAmountMax] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [selectMode, setSelectMode] = useState(false)
+  const [sortBy, setSortBy] = useState('posted_at')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   const { data: overview } = useOverview()
 
@@ -34,6 +60,15 @@ export default function Transactions() {
     return [inst, rest.join('/')]
   }, [account])
 
+  const handleSort = (key: string) => {
+    if (sortBy === key) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortBy(key)
+      setSortDir(key === 'posted_at' ? 'desc' : 'asc')
+    }
+  }
+
   const filters = useMemo(() => ({
     limit: 100,
     search: debouncedSearch || undefined,
@@ -42,7 +77,11 @@ export default function Transactions() {
     currency: currency || undefined,
     date_from: dateFrom || undefined,
     date_to: dateTo || undefined,
-  }), [debouncedSearch, filterInstitution, filterAccountRef, currency, dateFrom, dateTo])
+    amount_min: amountMin ? Number(amountMin) : undefined,
+    amount_max: amountMax ? Number(amountMax) : undefined,
+    sort_by: sortBy,
+    sort_dir: sortDir,
+  }), [debouncedSearch, filterInstitution, filterAccountRef, currency, dateFrom, dateTo, amountMin, amountMax, sortBy, sortDir])
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useTransactions(filters)
   const { data: detail, isLoading: detailLoading } = useTransaction(selectedId)
@@ -58,6 +97,8 @@ export default function Transactions() {
     setCurrency('')
     setDateFrom('')
     setDateTo('')
+    setAmountMin('')
+    setAmountMax('')
   }, [])
 
   const selectionCount = selectedIds.size
@@ -130,6 +171,39 @@ export default function Transactions() {
           </select>
           <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="bg-bg-card border border-border rounded-md px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent" />
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="bg-bg-card border border-border rounded-md px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent" />
+          <div className="flex items-center gap-1">
+            <input
+              type="number"
+              placeholder="Min £"
+              value={amountMin}
+              onChange={e => setAmountMin(e.target.value)}
+              className="bg-bg-card border border-border rounded-md px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent w-20"
+            />
+            <span className="text-text-secondary text-xs">to</span>
+            <input
+              type="number"
+              placeholder="Max £"
+              value={amountMax}
+              onChange={e => setAmountMax(e.target.value)}
+              className="bg-bg-card border border-border rounded-md px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent w-20"
+            />
+            {[
+              { label: 'Debits', min: '', max: '-0.01' },
+              { label: 'Credits', min: '0.01', max: '' },
+            ].map(p => (
+              <button
+                key={p.label}
+                onClick={() => { setAmountMin(p.min); setAmountMax(p.max) }}
+                className={`px-2 py-1 text-xs rounded border transition-colors ${
+                  amountMin === p.min && amountMax === p.max
+                    ? 'bg-accent/20 border-accent text-accent'
+                    : 'border-border text-text-secondary hover:border-accent hover:text-accent'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
           <button onClick={clearFilters} className="text-text-secondary hover:text-text-primary text-sm px-2">Clear</button>
           {!selectMode ? (
             <button onClick={enterSelectMode} className="text-text-secondary hover:text-accent text-sm px-2 ml-auto">Select</button>
@@ -155,11 +229,11 @@ export default function Transactions() {
                       />
                     </th>
                   )}
-                  <th className="pb-2 pr-4">Date</th>
-                  <th className="pb-2 pr-4">Merchant</th>
-                  <th className="pb-2 pr-4">Category</th>
-                  <th className="pb-2 pr-4 text-right">Amount</th>
-                  <th className="pb-2 pr-4">Source</th>
+                  <SortableHeader label="Date" sortKey="posted_at" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                  <SortableHeader label="Merchant" sortKey="merchant" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                  <SortableHeader label="Category" sortKey="category" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                  <SortableHeader label="Amount" sortKey="amount" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} align="right" />
+                  <SortableHeader label="Source" sortKey="source" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                 </tr>
               </thead>
               <tbody>

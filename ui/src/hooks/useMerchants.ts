@@ -6,11 +6,13 @@ import {
   updateMerchantName,
   mergeMerchant,
   bulkMergeMerchants,
+  splitAlias,
   fetchSuggestions,
   reviewSuggestion,
   runCategorisation,
   fetchRules,
   createRule,
+  updateRule,
   deleteRule,
   type MerchantFilters,
 } from '../api/merchants'
@@ -98,6 +100,19 @@ export function useBulkMergeMerchants() {
   })
 }
 
+export function useSplitAlias() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ merchantId, alias }: { merchantId: string; alias: string }) =>
+      splitAlias(merchantId, alias),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['merchants'] })
+      queryClient.invalidateQueries({ queryKey: ['merchant'] })
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+    },
+  })
+}
+
 export function useSuggestions(status = 'pending') {
   return useQuery({
     queryKey: ['suggestions', status],
@@ -140,6 +155,16 @@ export function useCreateRule() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (rule: Omit<DisplayRule, 'id'>) => createRule(rule),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['display-rules'] })
+    },
+  })
+}
+
+export function useUpdateRule() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, rule }: { id: number; rule: Omit<DisplayRule, 'id'> }) => updateRule(id, rule),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['display-rules'] })
     },

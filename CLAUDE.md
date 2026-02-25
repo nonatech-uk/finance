@@ -256,6 +256,8 @@ finance/
 3. Improve cleaning rules for First Direct CSV merchant strings
 
 **Future** (from DECISIONS.md):
+- UI context selector (Personal/Business/All) — global scope provider, stored in localStorage, flows to all API calls. Foundation in place: `account.scope` column + API filtering. Needs: React context, top-bar toggle, scope param on hardcoded endpoints.
+- Xero-replacement module for business account — own category tree, client dimension, VAT tracking. Queries `scope='business'`.
 - Inter-account transfer matching (economic events)
 - LLM-assisted categorisation
 - Monzo webhook endpoint via Cloudflare Tunnel

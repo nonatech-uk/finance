@@ -1,12 +1,25 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchTransactions, fetchTransaction, updateTransactionNote, updateTransactionCategory, linkTransfer, unlinkEvent, addTransactionTag, removeTransactionTag, fetchAllTags, bulkUpdateCategory, bulkUpdateMerchantName, bulkAddTags, bulkRemoveTag, bulkReplaceTags, bulkUpdateNote, type TransactionFilters } from '../api/transactions'
 
-export function useTransactions(filters: Omit<TransactionFilters, 'cursor'>) {
+export function useTransactions(filters: Omit<TransactionFilters, 'cursor' | 'offset'>) {
+  const isDateSort = !filters.sort_by || filters.sort_by === 'posted_at'
+
   return useInfiniteQuery({
     queryKey: ['transactions', filters],
-    queryFn: ({ pageParam }) => fetchTransactions({ ...filters, cursor: pageParam }),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.has_more ? lastPage.next_cursor ?? undefined : undefined,
+    queryFn: ({ pageParam }) => {
+      if (isDateSort) {
+        return fetchTransactions({ ...filters, cursor: pageParam as string | undefined })
+      }
+      return fetchTransactions({ ...filters, offset: (pageParam as number) || 0 })
+    },
+    initialPageParam: isDateSort ? (undefined as string | undefined) : (0 as number | undefined),
+    getNextPageParam: (lastPage, allPages) => {
+      if (!lastPage.has_more) return undefined
+      if (isDateSort) {
+        return lastPage.next_cursor ?? undefined
+      }
+      return allPages.reduce((sum, p) => sum + p.items.length, 0)
+    },
   })
 }
 
