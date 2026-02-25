@@ -182,6 +182,8 @@ function MerchantSlideOver({
   const [displayName, setDisplayName] = useState('')
   const [mergeSearch, setMergeSearch] = useState('')
   const [showMerge, setShowMerge] = useState(false)
+  const [confirmingAlias, setConfirmingAlias] = useState<string | null>(null)
+  const [confirmingMerge, setConfirmingMerge] = useState<string | null>(null)
 
   const { data: mergeResults } = useMerchants({
     search: mergeSearch || undefined,
@@ -258,20 +260,40 @@ function MerchantSlideOver({
           <div className="space-y-1 max-h-40 overflow-y-auto">
             {data.aliases.map(a => (
               <div key={a} className="flex items-center gap-1 text-xs text-text-secondary bg-bg-card rounded px-2 py-1">
-                <span className="flex-1 truncate">{a}</span>
-                {data.aliases.length > 1 && (
-                  <button
-                    onClick={() => {
-                      if (confirm(`Split "${a}" into its own merchant?`)) {
-                        splitMutation.mutate({ merchantId, alias: a })
-                      }
-                    }}
-                    disabled={splitMutation.isPending}
-                    className="shrink-0 text-text-secondary hover:text-red-400 transition-colors disabled:opacity-50"
-                    title="Split into separate merchant"
-                  >
-                    ×
-                  </button>
+                {confirmingAlias === a ? (
+                  <>
+                    <span className="flex-1 text-text-primary">Split &ldquo;{a}&rdquo;?</span>
+                    <button
+                      onClick={() => {
+                        splitMutation.mutate({ merchantId, alias: a }, {
+                          onSettled: () => setConfirmingAlias(null),
+                        })
+                      }}
+                      disabled={splitMutation.isPending}
+                      className="shrink-0 text-green-400 hover:text-green-300 font-bold disabled:opacity-50"
+                    >
+                      {splitMutation.isPending ? '...' : '✓'}
+                    </button>
+                    <button
+                      onClick={() => setConfirmingAlias(null)}
+                      className="shrink-0 text-text-secondary hover:text-text-primary"
+                    >
+                      ✗
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="flex-1 truncate">{a}</span>
+                    {data.aliases.length > 1 && (
+                      <button
+                        onClick={() => setConfirmingAlias(a)}
+                        className="shrink-0 text-text-secondary hover:text-red-400 transition-colors"
+                        title="Split into separate merchant"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
             ))}
@@ -320,19 +342,36 @@ function MerchantSlideOver({
               {mergeSearch && mergeItems.map(m => (
                 <div key={m.id} className="flex items-center justify-between bg-bg-card rounded px-2 py-1">
                   <span className="text-xs truncate">{m.display_name || m.name}</span>
-                  <button
-                    onClick={() => {
-                      if (confirm(`Merge "${m.name}" into "${data.name}"?`)) {
-                        mergeMutation.mutate(
-                          { survivingId: merchantId, mergeFromId: m.id },
-                          { onSuccess: () => { setShowMerge(false); setMergeSearch('') } }
-                        )
-                      }
-                    }}
-                    className="text-xs px-2 py-0.5 bg-red-600/20 text-red-400 rounded hover:bg-red-600/30 ml-2 shrink-0"
-                  >
-                    Merge
-                  </button>
+                  {confirmingMerge === m.id ? (
+                    <span className="flex items-center gap-1 ml-2 shrink-0">
+                      <span className="text-xs text-text-secondary">Sure?</span>
+                      <button
+                        onClick={() => {
+                          mergeMutation.mutate(
+                            { survivingId: merchantId, mergeFromId: m.id },
+                            { onSuccess: () => { setShowMerge(false); setMergeSearch(''); setConfirmingMerge(null) } }
+                          )
+                        }}
+                        disabled={mergeMutation.isPending}
+                        className="text-xs px-1.5 py-0.5 bg-red-600/20 text-red-400 rounded hover:bg-red-600/30 disabled:opacity-50"
+                      >
+                        {mergeMutation.isPending ? '...' : 'Yes'}
+                      </button>
+                      <button
+                        onClick={() => setConfirmingMerge(null)}
+                        className="text-xs px-1.5 py-0.5 text-text-secondary hover:text-text-primary"
+                      >
+                        No
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmingMerge(m.id)}
+                      className="text-xs px-2 py-0.5 bg-red-600/20 text-red-400 rounded hover:bg-red-600/30 ml-2 shrink-0"
+                    >
+                      Merge
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -380,6 +419,7 @@ function DisplayRulesPanel({ categoryOptions }: { categoryOptions: CategoryOptio
   const [ruleSortBy, setRuleSortBy] = useState('priority')
   const [ruleSortDir, setRuleSortDir] = useState<'asc' | 'desc'>('asc')
   const [editingId, setEditingId] = useState<number | null>(null)
+  const [confirmingDeleteRule, setConfirmingDeleteRule] = useState<number | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const editingIdRef = useRef(editingId)
   const editStateRef = useRef<{ pattern: string; display_name: string; merge_group: boolean; category_hint: string | null; priority: number }>({ pattern: '', display_name: '', merge_group: true, category_hint: null, priority: 100 })
@@ -670,13 +710,30 @@ function DisplayRulesPanel({ categoryOptions }: { categoryOptions: CategoryOptio
                     <td className="py-1.5 pr-2">{r.merge_group ? '✓' : '—'}</td>
                     <td className="py-1.5 pr-2 text-text-secondary">{r.priority}</td>
                     <td className="py-1.5">
-                      <button
-                        onClick={e => { e.stopPropagation(); if (confirm(`Delete rule "${r.pattern}"?`)) deleteMutation.mutate(r.id) }}
-                        disabled={deleteMutation.isPending}
-                        className="text-red-400 hover:text-red-300"
-                      >
-                        ✗
-                      </button>
+                      {confirmingDeleteRule === r.id ? (
+                        <span className="flex items-center gap-1">
+                          <button
+                            onClick={e => { e.stopPropagation(); deleteMutation.mutate(r.id, { onSettled: () => setConfirmingDeleteRule(null) }) }}
+                            disabled={deleteMutation.isPending}
+                            className="text-red-400 hover:text-red-300 disabled:opacity-50"
+                          >
+                            {deleteMutation.isPending ? '...' : '✓'}
+                          </button>
+                          <button
+                            onClick={e => { e.stopPropagation(); setConfirmingDeleteRule(null) }}
+                            className="text-text-secondary hover:text-text-primary"
+                          >
+                            ✗
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          onClick={e => { e.stopPropagation(); setConfirmingDeleteRule(r.id) }}
+                          className="text-red-400 hover:text-red-300"
+                        >
+                          ✗
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

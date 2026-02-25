@@ -234,6 +234,7 @@ function CategoryManagePanel({
 }) {
   const [renameName, setRenameName] = useState(cat.name)
   const [reassignTo, setReassignTo] = useState('')
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const renameMutation = useRenameCategory()
   const deleteMutation = useDeleteCategory()
 
@@ -243,6 +244,7 @@ function CategoryManagePanel({
     setPrevId(cat.id)
     setRenameName(cat.name)
     setReassignTo('')
+    setConfirmingDelete(false)
   }
 
   const handleRename = () => {
@@ -252,9 +254,12 @@ function CategoryManagePanel({
 
   const handleDelete = () => {
     if (!reassignTo) return
-    if (!confirm(`Delete "${cat.full_path}" and reassign all merchants to the selected category?`)) return
+    if (!confirmingDelete) {
+      setConfirmingDelete(true)
+      return
+    }
     deleteMutation.mutate({ id: cat.id, reassignTo }, {
-      onSuccess: () => onDeselect(),
+      onSuccess: () => { setConfirmingDelete(false); onDeselect() },
     })
   }
 
@@ -304,13 +309,23 @@ function CategoryManagePanel({
               <option key={c.id} value={c.id}>{c.path}</option>
             ))}
         </select>
-        <button
-          onClick={handleDelete}
-          disabled={deleteMutation.isPending || !reassignTo}
-          className="px-3 py-1 text-xs bg-red-600/20 text-red-400 rounded hover:bg-red-600/30 disabled:opacity-50"
-        >
-          {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleDelete}
+            disabled={deleteMutation.isPending || !reassignTo}
+            className="px-3 py-1 text-xs bg-red-600/20 text-red-400 rounded hover:bg-red-600/30 disabled:opacity-50"
+          >
+            {deleteMutation.isPending ? 'Deleting...' : confirmingDelete ? 'Confirm Delete' : 'Delete'}
+          </button>
+          {confirmingDelete && (
+            <button
+              onClick={() => setConfirmingDelete(false)}
+              className="px-2 py-1 text-xs text-text-secondary hover:text-text-primary"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
         {deleteMutation.isSuccess && (
           <p className="text-xs text-green-400">
             Deleted. {deleteMutation.data.merchants_moved} merchants reassigned.
