@@ -8,6 +8,7 @@ Rules-as-configuration, not hardcoded logic.
 SOURCE_PRIORITY = {
     "monzo_api": 1,
     "wise_api": 1,
+    "first_direct_bankivity": 1,
     "first_direct_csv": 2,
     "first_direct_pdf": 2,
     "wise_csv": 2,
@@ -124,8 +125,19 @@ SOURCE_SUPERSEDED = [
 # Cross-source pairs to check for each institution/account.
 # All Wise sources handled by SOURCE_SUPERSEDED (CSV is sole authority).
 CROSS_SOURCE_PAIRS = [
-    # First Direct Visa — PDF is authoritative; CSV superseded
-    # Monzo — handled by SOURCE_SUPERSEDED
-    # Wise — handled by SOURCE_SUPERSEDED (CSV only)
-    # Marcus — handled by SOURCE_SUPERSEDED
+    # First Direct — Bankivity (Salt Edge) vs existing sources
+    {
+        "institution": "first_direct",
+        "account_ref": "fd_5682",
+        "pairs": [
+            ("first_direct_bankivity", "first_direct_csv"),
+        ],
+    },
+    {
+        "institution": "first_direct",
+        "account_ref": "fd_8897",
+        "pairs": [
+            ("first_direct_bankivity", "first_direct_pdf"),
+        ],
+    },
 ]
