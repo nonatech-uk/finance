@@ -45,7 +45,7 @@ The `active_transaction` view provides a deduplicated lens over raw data without
 - **Python 3.12+**
 - **PostgreSQL** (on NAS)
 - **FastAPI** (REST API on :8000)
-- **React 19 + Vite + TypeScript + Tailwind v4 + TanStack Query + Recharts** (UI on :5173)
+- **React 19 + Vite + TypeScript + Tailwind v4 + TanStack Query + Recharts** (UI served by FastAPI in production, Vite dev server on :5173 locally)
 - **psycopg2** (sync DB access with connection pool)
 - **Podman** (daily sync container on NAS)
 
@@ -112,9 +112,14 @@ python scripts/amazon_load.py              # Amazon order history matching
 python scripts/load_ibank_categories.py    # Category taxonomy from iBank
 ```
 
-## Daily Sync Container
+## Deployment
 
-Podman container running on the NAS (192.168.128.9). Runs the Monzo auth server persistently on port 9876 and syncs Wise + Monzo transactions daily at 3am via systemd timer.
+Podman container on the NAS (192.168.128.9). Multi-stage build: Node builds the React SPA, Python serves it via FastAPI alongside the API. The container runs two services:
+
+- **FastAPI** (port 8000) — API + static UI, behind Authelia via Traefik
+- **Monzo OAuth server** (port 9876) — handles Monzo authentication callbacks
+
+Traefik routes `finance.mees.st` through Authelia forward-auth to the API, with `/oauth/*` bypassing auth for Monzo callbacks.
 
 ```bash
 # Build and run
@@ -123,12 +128,12 @@ Podman container running on the NAS (192.168.128.9). Runs the Monzo auth server 
 # Manual sync
 podman exec finance-sync python scripts/daily_sync.py
 
-# Install systemd timer
+# Install systemd timer (3am daily)
 cp deploy/finance-sync.{service,timer} /etc/systemd/system/
 systemctl enable --now finance-sync.timer
 ```
 
-Monzo re-authentication available at `https://finance.mees.st/` from any LAN device.
+Monzo re-authentication available at `https://finance.mees.st/oauth/callback` flow.
 
 ## Project Structure
 
@@ -160,7 +165,7 @@ deploy/
     finance-sync.service # Systemd oneshot for daily sync
     finance-sync.timer   # 3am daily trigger
 ui/                      # React + Vite + TypeScript
-Containerfile            # Podman/Docker build
+Containerfile            # Multi-stage build (Node + Python)
 ```
 
 ## License

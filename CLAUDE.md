@@ -112,10 +112,12 @@ WHERE NOT EXISTS (
 Container running on `192.168.128.9`. Syncs Monzo + Wise transactions daily at 3am.
 
 ### Components
-- **`src/ingestion/monzo_auth.py`** — Persistent HTTP server on `0.0.0.0:9876`. Serves status page, handles OAuth callback, provides JSON polling for app approval. Main container process.
+- **`scripts/entrypoint.sh`** — Container entrypoint. Starts Monzo auth server (background) + FastAPI via uvicorn (foreground).
+- **`src/ingestion/monzo_auth.py`** — Persistent HTTP server on `0.0.0.0:9876`. Serves status page, handles OAuth callback, provides JSON polling for app approval.
+- **`src/api/app.py`** — FastAPI app on `0.0.0.0:8000`. Serves API under `/api/v1/` and the React SPA as static files (fallback to `index.html` for client-side routing).
 - **`scripts/daily_sync.py`** — Orchestrator: Wise sync (30 days) → Monzo sync (headless refresh, 30 days) → cleaning → dedup → healthcheck pings.
-- **`Containerfile`** — Python 3.12-slim, exposes 9876.
-- **`deploy/run.sh`** — Build + run with secrets from `/opt/finance/secrets/`.
+- **`Containerfile`** — Multi-stage build: Node (builds React UI) → Python 3.12-slim (API + static files). Exposes 8000 + 9876.
+- **`deploy/run.sh`** — Build + run with secrets from `/zfs/Apps/AppData/finance/`.
 - **`deploy/finance-sync.timer`** — Systemd timer, 3am daily.
 
 ### Key Design Decisions
@@ -127,12 +129,20 @@ Container running on `192.168.128.9`. Syncs Monzo + Wise transactions daily at 3
 - Wise `_api_get()` and `_headers()` now have timeout=30, 401 handling, and empty token guard.
 - Monzo `_api_get()` and `list_accounts()` now have timeout=30 and 401 → `AuthRequiredError`.
 
+### Authentication
+- **Authelia** handles authentication via Traefik forward-auth middleware.
+- Traefik passes `Remote-Email`, `Remote-Name`, `Remote-Groups` headers to the API.
+- `app_user` table controls per-user access: email, display_name, allowed_scopes (personal/business), role (admin/readonly).
+- `auth_enabled` setting defaults to `True`; set to `false` in `config/.env` for local dev (uses `dev_user_email`).
+
+### Traefik Routing
+- `finance.mees.st` → Authelia middleware → `finance-api` service (port 8000) — serves UI + API
+- `finance.mees.st/oauth/*` → `finance-oauth` service (port 9876) — Monzo OAuth callback (no auth)
+
 ### Deployment
 ```bash
 # On 192.168.128.9
-mkdir -p /opt/finance/secrets
-# Place .env and tokens.json in /opt/finance/secrets/
-# Set up reverse proxy: finance.mees.st → localhost:9876
+# Secrets in /zfs/Apps/AppData/finance/ (.env + tokens.json)
 ./deploy/run.sh
 # Install timer
 cp deploy/finance-sync.{service,timer} /etc/systemd/system/
@@ -161,7 +171,11 @@ All under `/api/v1/`:
 
 ---
 
-## UI (React on :5173)
+## UI (React)
+
+In production, the React SPA is built during the container image build (multi-stage Containerfile) and served by FastAPI as static files. No separate UI server needed.
+
+For local development:
 
 ### Pages
 - **Dashboard**: 4 stat cards, 12-month income/expense BarChart, top spending categories
@@ -207,8 +221,8 @@ finance/
 │   │   ├── config.py           # Source priorities + supersession + cross-source pairs
 │   │   └── matcher.py          # Dedup matching + group creation
 │   └── api/
-│       ├── app.py              # FastAPI app + lifespan + CORS
-│       ├── deps.py             # Connection pool + get_conn dependency
+│       ├── app.py              # FastAPI app + lifespan + CORS + SPA serving
+│       ├── deps.py             # Connection pool + auth (Authelia headers)
 │       ├── models.py           # Pydantic response models
 │       └── routers/
 │           ├── transactions.py
@@ -228,7 +242,7 @@ finance/
 │   ├── run.sh                  # Podman build + run
 │   ├── finance-sync.service    # Systemd oneshot unit
 │   └── finance-sync.timer      # 3am daily trigger
-├── Containerfile               # Podman/Docker build
+├── Containerfile               # Multi-stage build (Node + Python)
 ├── .wise                       # Wise API token (gitignored)
 ├── DECISIONS.md                # Architecture & design decisions
 ├── SCHEMA.md                   # Full database schema
