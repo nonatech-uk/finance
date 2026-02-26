@@ -17,7 +17,7 @@ function today() {
 }
 
 // Flatten tree into a list for dropdowns
-function flattenTree(items: CategoryItem[], prefix = ''): { id: string; path: string }[] {
+function flattenTree(items: CategoryItem[], _prefix = ''): { id: string; path: string }[] {
   const result: { id: string; path: string }[] = []
   for (const cat of items) {
     result.push({ id: cat.id, path: cat.full_path })
@@ -134,7 +134,7 @@ export default function Categories() {
                   <YAxis type="category" dataKey="name" tick={{ fill: '#6b7280', fontSize: 11 }} width={100} />
                   <Tooltip
                     contentStyle={{ background: '#ffffff', border: '1px solid #e2e4e8', borderRadius: 8, color: '#1a1a2e' }}
-                    formatter={(value: number) => [`£${value.toLocaleString('en-GB', { minimumFractionDigits: 2 })}`, 'Spent']}
+                    formatter={(value: number | undefined) => [`£${(value ?? 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`, 'Spent']}
                   />
                   <Bar dataKey="amount" fill="#dc2626" radius={[0, 2, 2, 0]} />
                 </BarChart>

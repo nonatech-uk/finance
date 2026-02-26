@@ -4,4 +4,5 @@ requests
 python-dotenv
 rapidfuzz
 fastapi
+python-multipart
 uvicorn[standard]

@@ -8,7 +8,7 @@ import CurrencyAmount from '../components/common/CurrencyAmount'
 import Badge from '../components/common/Badge'
 import LoadingSpinner from '../components/common/LoadingSpinner'
 import JsonViewer from '../components/common/JsonViewer'
-import type { TransactionItem, TransactionDetail, CategoryItem, TagItem, SplitLineItem } from '../api/types'
+import type { TransactionItem, TransactionDetail, CategoryItem, TagItem } from '../api/types'
 import type { SplitLineInput } from '../api/transactions'
 
 function SortableHeader({

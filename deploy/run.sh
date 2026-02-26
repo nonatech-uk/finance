@@ -39,7 +39,7 @@ podman run -d \
     --name "$CONTAINER" \
     --restart unless-stopped \
     --network host \
-    -v "$SECRETS_DIR/.env:/app/.env:ro" \
+    -v "$SECRETS_DIR/.env:/app/config/.env:ro" \
     -v "$SECRETS_DIR/tokens.json:/app/tokens.json:rw" \
     -e MONZO_TOKEN_FILE=/app/tokens.json \
     -e MONZO_REDIRECT_URI="https://finance.mees.st/oauth/callback" \

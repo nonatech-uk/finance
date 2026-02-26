@@ -81,7 +81,7 @@ export interface SplitLineItem {
   description: string | null
 }
 
-export interface TransactionDetail extends TransactionItem {
+export interface TransactionDetail extends Omit<TransactionItem, 'tags'> {
   raw_data: Record<string, unknown> | null
   note: string | null
   note_source: string | null

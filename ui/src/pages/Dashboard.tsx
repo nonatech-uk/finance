@@ -70,7 +70,7 @@ export default function Dashboard() {
                 <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} tickLine={false} tickFormatter={v => `£${(v / 1000).toFixed(0)}k`} />
                 <Tooltip
                   contentStyle={{ background: '#ffffff', border: '1px solid #e2e4e8', borderRadius: 8, color: '#1a1a2e' }}
-                  formatter={(value: number) => [`£${value.toLocaleString('en-GB', { minimumFractionDigits: 0 })}`, '']}
+                  formatter={(value: number | undefined) => [`£${(value ?? 0).toLocaleString('en-GB', { minimumFractionDigits: 0 })}`, '']}
                 />
                 <Bar dataKey="income" fill="#16a34a" radius={[2, 2, 0, 0]} />
                 <Bar dataKey="expense" fill="#dc2626" radius={[2, 2, 0, 0]} />
@@ -90,7 +90,7 @@ export default function Dashboard() {
                 <YAxis type="category" dataKey="name" tick={{ fill: '#6b7280', fontSize: 11 }} width={80} />
                 <Tooltip
                   contentStyle={{ background: '#ffffff', border: '1px solid #e2e4e8', borderRadius: 8, color: '#1a1a2e' }}
-                  formatter={(value: number) => [`£${value.toLocaleString('en-GB', { minimumFractionDigits: 2 })}`, 'Spent']}
+                  formatter={(value: number | undefined) => [`£${(value ?? 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`, 'Spent']}
                 />
                 <Bar dataKey="amount" fill="#dc2626" radius={[0, 2, 2, 0]} />
               </BarChart>

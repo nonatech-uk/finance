@@ -10,12 +10,16 @@ _project_root = str(Path(__file__).resolve().parent.parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from config.settings import settings
 from src.api.deps import close_pool, init_pool
 from src.api.routers import accounts, auth, categories, imports, merchants, stats, transactions
+
+STATIC_DIR = Path(_project_root) / "static"
 
 
 @asynccontextmanager
@@ -54,3 +58,15 @@ app.include_router(imports.router, prefix="/api/v1", tags=["imports"])
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# Serve React SPA — static assets first, then fallback to index.html
+if STATIC_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="static-assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(request: Request, full_path: str):
+        file_path = STATIC_DIR / full_path
+        if full_path and file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(STATIC_DIR / "index.html")
