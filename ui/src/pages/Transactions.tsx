@@ -94,6 +94,16 @@ export default function Transactions() {
     return data.pages.flatMap(p => p.items)
   }, [data])
 
+  const accountLabelMap = useMemo(() => {
+    const map: Record<string, string> = {}
+    if (overview?.accounts) {
+      for (const a of overview.accounts) {
+        map[`${a.institution}/${a.account_ref}`] = a.label
+      }
+    }
+    return map
+  }, [overview])
+
   const clearFilters = useCallback(() => {
     setSearch('')
     setAccount('')
@@ -246,7 +256,7 @@ export default function Transactions() {
                   <SortableHeader label="Merchant" sortKey="merchant" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <SortableHeader label="Category" sortKey="category" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <SortableHeader label="Amount" sortKey="amount" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} align="right" />
-                  <SortableHeader label="Source" sortKey="source" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                  <SortableHeader label="Account" sortKey="source" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                 </tr>
               </thead>
               <tbody>
@@ -257,6 +267,7 @@ export default function Transactions() {
                     isSelected={txn.id === selectedId}
                     isChecked={selectedIds.has(txn.id)}
                     selectMode={selectMode}
+                    accountLabel={accountLabelMap[`${txn.institution}/${txn.account_ref}`] || txn.account_ref}
                     onClick={() => setSelectedId(txn.id === selectedId ? null : txn.id)}
                     onToggle={() => toggleSelection(txn.id)}
                   />
@@ -301,8 +312,8 @@ export default function Transactions() {
   )
 }
 
-function TransactionRow({ txn, isSelected, isChecked, selectMode, onClick, onToggle }: {
-  txn: TransactionItem; isSelected: boolean; isChecked: boolean; selectMode: boolean
+function TransactionRow({ txn, isSelected, isChecked, selectMode, accountLabel, onClick, onToggle }: {
+  txn: TransactionItem; isSelected: boolean; isChecked: boolean; selectMode: boolean; accountLabel: string
   onClick: () => void; onToggle: () => void
 }) {
   const handleClick = () => {
@@ -361,7 +372,7 @@ function TransactionRow({ txn, isSelected, isChecked, selectMode, onClick, onTog
         <CurrencyAmount amount={txn.amount} currency={txn.currency} showSign={false} />
       </td>
       <td className="py-2 pr-4">
-        <Badge>{txn.source}</Badge>
+        <Badge>{accountLabel}</Badge>
       </td>
     </tr>
   )

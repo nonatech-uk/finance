@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.deps import close_pool, init_pool
-from src.api.routers import accounts, categories, merchants, stats, transactions
+from src.api.routers import accounts, categories, imports, merchants, stats, transactions
 
 
 @asynccontextmanager
@@ -46,6 +46,7 @@ app.include_router(accounts.router, prefix="/api/v1", tags=["accounts"])
 app.include_router(categories.router, prefix="/api/v1", tags=["categories"])
 app.include_router(merchants.router, prefix="/api/v1", tags=["merchants"])
 app.include_router(stats.router, prefix="/api/v1", tags=["stats"])
+app.include_router(imports.router, prefix="/api/v1", tags=["imports"])
 
 
 @app.get("/health")

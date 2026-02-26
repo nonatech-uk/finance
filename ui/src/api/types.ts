@@ -251,6 +251,40 @@ export interface SpendingReport {
   total_expense: string
 }
 
+// ── CSV Import ──
+
+export interface CsvPreviewTransaction {
+  transaction_ref: string | null
+  posted_at: string | null
+  amount: string
+  currency: string
+  raw_merchant: string | null
+}
+
+export interface CsvMismatch {
+  transaction_ref: string
+  posted_at: string | null
+  raw_merchant: string | null
+  csv_amount: string
+  db_amount: string
+}
+
+export interface CsvPreviewResult {
+  format: string
+  total_rows: number
+  new_count: number
+  existing_count: number
+  mismatch_count: number
+  new_transactions: CsvPreviewTransaction[]
+  mismatches: CsvMismatch[]
+}
+
+export interface CsvImportResult {
+  inserted: number
+  skipped: number
+  pipeline: Record<string, unknown>
+}
+
 // ── Stats ──
 
 export interface MonthlyTotal {

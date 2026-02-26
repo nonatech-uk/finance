@@ -411,6 +411,47 @@ class SpendingReport(BaseModel):
     total_expense: Decimal
 
 
+# ── CSV Import ────────────────────────────────────────────────────────────────
+
+
+class CsvPreviewTransaction(BaseModel):
+    transaction_ref: str | None = None
+    posted_at: str | None = None
+    amount: str
+    currency: str = "GBP"
+    raw_merchant: str | None = None
+
+
+class CsvMismatch(BaseModel):
+    transaction_ref: str
+    posted_at: str | None = None
+    raw_merchant: str | None = None
+    csv_amount: str
+    db_amount: str
+
+
+class CsvPreviewResult(BaseModel):
+    format: str
+    total_rows: int
+    new_count: int
+    existing_count: int
+    mismatch_count: int
+    new_transactions: list[CsvPreviewTransaction] = []
+    mismatches: list[CsvMismatch] = []
+
+
+class CsvConfirmRequest(BaseModel):
+    institution: str
+    account_ref: str
+    format: str
+
+
+class CsvImportResult(BaseModel):
+    inserted: int
+    skipped: int
+    pipeline: dict = {}
+
+
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 

@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAccounts, useUpdateAccount } from '../hooks/useAccounts'
+import { useCsvPreview, useCsvConfirm } from '../hooks/useImports'
 import CurrencyAmount from '../components/common/CurrencyAmount'
 import Badge from '../components/common/Badge'
 import LoadingSpinner from '../components/common/LoadingSpinner'
-import type { AccountItem } from '../api/types'
+import type { AccountItem, CsvPreviewResult } from '../api/types'
 
 function AccountEditModal({
   account,
@@ -99,9 +100,299 @@ function AccountEditModal({
   )
 }
 
+
+function CsvImportModal({
+  account,
+  onClose,
+}: {
+  account: AccountItem
+  onClose: () => void
+}) {
+  const preview = useCsvPreview()
+  const confirm = useCsvConfirm()
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [dragActive, setDragActive] = useState(false)
+  const [previewData, setPreviewData] = useState<CsvPreviewResult | null>(null)
+  const [importDone, setImportDone] = useState(false)
+
+  const handleFile = useCallback(
+    (file: File) => {
+      setPreviewData(null)
+      setImportDone(false)
+      preview.mutate(
+        {
+          file,
+          institution: account.institution,
+          accountRef: account.account_ref,
+        },
+        {
+          onSuccess: data => setPreviewData(data),
+        },
+      )
+    },
+    [account, preview],
+  )
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault()
+      setDragActive(false)
+      const file = e.dataTransfer.files[0]
+      if (file) handleFile(file)
+    },
+    [handleFile],
+  )
+
+  const handleConfirm = () => {
+    confirm.mutate(
+      {
+        institution: account.institution,
+        accountRef: account.account_ref,
+      },
+      {
+        onSuccess: () => setImportDone(true),
+      },
+    )
+  }
+
+  const accountLabel = account.display_name || account.name || account.account_ref
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
+      <div
+        className="bg-bg-card border border-border rounded-lg p-6 w-[36rem] max-h-[80vh] overflow-y-auto space-y-4"
+        onClick={e => e.stopPropagation()}
+      >
+        <div>
+          <h3 className="text-lg font-semibold">Import CSV</h3>
+          <p className="text-text-secondary text-sm">
+            {account.institution} / {accountLabel}
+          </p>
+        </div>
+
+        {/* Drop zone */}
+        {!previewData && !importDone && (
+          <div
+            onDragEnter={() => setDragActive(true)}
+            onDragLeave={() => setDragActive(false)}
+            onDragOver={e => e.preventDefault()}
+            onDrop={handleDrop}
+            onClick={() => fileRef.current?.click()}
+            className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+              dragActive
+                ? 'border-accent bg-accent/5'
+                : 'border-border hover:border-text-secondary'
+            }`}
+          >
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv"
+              className="hidden"
+              onChange={e => {
+                const file = e.target.files?.[0]
+                if (file) handleFile(file)
+              }}
+            />
+            {preview.isPending ? (
+              <div className="flex items-center justify-center gap-2">
+                <LoadingSpinner />
+                <span className="text-sm text-text-secondary">Analysing CSV...</span>
+              </div>
+            ) : (
+              <>
+                <p className="text-text-secondary text-sm">
+                  Drop a CSV file here or click to browse
+                </p>
+                <p className="text-text-secondary text-xs mt-1">
+                  Supports First Direct, Marcus, Wise, and Monzo exports
+                </p>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Error */}
+        {preview.isError && (
+          <div className="bg-expense/10 border border-expense/30 rounded p-3 text-sm text-expense">
+            {preview.error instanceof Error ? preview.error.message : 'Upload failed'}
+          </div>
+        )}
+
+        {/* Preview results */}
+        {previewData && !importDone && (
+          <div className="space-y-4">
+            {/* Summary */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-bg-hover rounded p-3 text-center">
+                <div className="text-lg font-semibold">{previewData.total_rows}</div>
+                <div className="text-xs text-text-secondary">Total rows</div>
+              </div>
+              <div className="bg-bg-hover rounded p-3 text-center">
+                <div className="text-lg font-semibold text-income">{previewData.new_count}</div>
+                <div className="text-xs text-text-secondary">New</div>
+              </div>
+              <div className="bg-bg-hover rounded p-3 text-center">
+                <div className="text-lg font-semibold">{previewData.existing_count}</div>
+                <div className="text-xs text-text-secondary">Already in DB</div>
+              </div>
+            </div>
+
+            <p className="text-xs text-text-secondary">
+              Detected format: <Badge>{previewData.format}</Badge>
+            </p>
+
+            {/* Mismatches */}
+            {previewData.mismatch_count > 0 && (
+              <div>
+                <h4 className="text-sm font-medium text-warning mb-2">
+                  {previewData.mismatch_count} amount mismatch{previewData.mismatch_count > 1 ? 'es' : ''}
+                </h4>
+                <div className="max-h-32 overflow-y-auto border border-border rounded">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-border text-left text-text-secondary">
+                        <th className="px-2 py-1">Date</th>
+                        <th className="px-2 py-1">Merchant</th>
+                        <th className="px-2 py-1 text-right">CSV</th>
+                        <th className="px-2 py-1 text-right">DB</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewData.mismatches.map((m, i) => (
+                        <tr key={i} className="border-b border-border last:border-0">
+                          <td className="px-2 py-1">{m.posted_at}</td>
+                          <td className="px-2 py-1 truncate max-w-[10rem]">{m.raw_merchant}</td>
+                          <td className="px-2 py-1 text-right text-warning">{m.csv_amount}</td>
+                          <td className="px-2 py-1 text-right">{m.db_amount}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* New transactions */}
+            {previewData.new_count > 0 && (
+              <div>
+                <h4 className="text-sm font-medium mb-2">
+                  {previewData.new_count} new transaction{previewData.new_count > 1 ? 's' : ''} to import
+                </h4>
+                <div className="max-h-48 overflow-y-auto border border-border rounded">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-border text-left text-text-secondary sticky top-0 bg-bg-card">
+                        <th className="px-2 py-1">Date</th>
+                        <th className="px-2 py-1">Merchant</th>
+                        <th className="px-2 py-1 text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewData.new_transactions.map((t, i) => (
+                        <tr key={i} className="border-b border-border last:border-0">
+                          <td className="px-2 py-1">{t.posted_at}</td>
+                          <td className="px-2 py-1 truncate max-w-[14rem]">{t.raw_merchant}</td>
+                          <td className="px-2 py-1 text-right">
+                            <CurrencyAmount amount={t.amount} currency={t.currency} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex justify-between items-center pt-2">
+              <button
+                onClick={() => {
+                  setPreviewData(null)
+                  preview.reset()
+                  if (fileRef.current) fileRef.current.value = ''
+                }}
+                className="text-sm text-text-secondary hover:text-text-primary transition-colors"
+              >
+                Upload different file
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 text-sm rounded border border-border hover:bg-bg-hover transition-colors"
+                >
+                  Cancel
+                </button>
+                {previewData.new_count > 0 && (
+                  <button
+                    onClick={handleConfirm}
+                    disabled={confirm.isPending}
+                    className="px-4 py-2 text-sm rounded bg-accent text-white hover:bg-accent/80 transition-colors disabled:opacity-50"
+                  >
+                    {confirm.isPending ? (
+                      <span className="flex items-center gap-2">
+                        <LoadingSpinner /> Importing...
+                      </span>
+                    ) : (
+                      `Import ${previewData.new_count} transaction${previewData.new_count > 1 ? 's' : ''}`
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Nothing new */}
+        {previewData && previewData.new_count === 0 && !importDone && (
+          <div className="text-center py-4">
+            <p className="text-sm text-text-secondary">
+              All {previewData.existing_count} transactions already exist in the database.
+            </p>
+            <button
+              onClick={onClose}
+              className="mt-3 px-4 py-2 text-sm rounded border border-border hover:bg-bg-hover transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        )}
+
+        {/* Import complete */}
+        {importDone && confirm.data && (
+          <div className="text-center py-4 space-y-3">
+            <div className="text-income text-lg font-semibold">
+              Import complete
+            </div>
+            <p className="text-sm text-text-secondary">
+              {confirm.data.inserted} transaction{confirm.data.inserted !== 1 ? 's' : ''} imported,{' '}
+              {confirm.data.skipped} skipped.
+            </p>
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-sm rounded bg-accent text-white hover:bg-accent/80 transition-colors"
+            >
+              Done
+            </button>
+          </div>
+        )}
+
+        {/* Confirm error */}
+        {confirm.isError && (
+          <div className="bg-expense/10 border border-expense/30 rounded p-3 text-sm text-expense">
+            {confirm.error instanceof Error ? confirm.error.message : 'Import failed'}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+
 export default function Accounts() {
   const [showArchived, setShowArchived] = useState(false)
   const [editAccount, setEditAccount] = useState<AccountItem | null>(null)
+  const [importAccount, setImportAccount] = useState<AccountItem | null>(null)
   const { data, isLoading } = useAccounts(showArchived)
 
   const grouped = useMemo(() => {
@@ -143,25 +434,42 @@ export default function Accounts() {
                   acct.is_archived ? 'opacity-50' : 'hover:border-accent/50'
                 }`}
               >
-                <button
-                  onClick={e => {
-                    e.preventDefault()
-                    setEditAccount(acct)
-                  }}
-                  className="absolute top-2 right-2 p-1.5 rounded hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors"
-                  title="Edit account"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5">
-                    <path d="M13.488 2.513a1.75 1.75 0 0 0-2.475 0L6.75 6.774a2.75 2.75 0 0 0-.596.892l-.848 2.047a.75.75 0 0 0 .98.98l2.047-.848a2.75 2.75 0 0 0 .892-.596l4.261-4.262a1.75 1.75 0 0 0 0-2.474Z" />
-                    <path d="M4.75 3.5c-.69 0-1.25.56-1.25 1.25v6.5c0 .69.56 1.25 1.25 1.25h6.5c.69 0 1.25-.56 1.25-1.25V9A.75.75 0 0 1 14 9v2.25A2.75 2.75 0 0 1 11.25 14h-6.5A2.75 2.75 0 0 1 2 11.25v-6.5A2.75 2.75 0 0 1 4.75 2H7a.75.75 0 0 1 0 1.5H4.75Z" />
-                  </svg>
-                </button>
+                {/* Action buttons */}
+                <div className="absolute top-2 right-2 flex gap-0.5">
+                  <button
+                    onClick={e => {
+                      e.preventDefault()
+                      setImportAccount(acct)
+                    }}
+                    className="p-1.5 rounded hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors"
+                    title="Import CSV"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5">
+                      <path d="M8 1a.75.75 0 0 1 .75.75v6.5a.75.75 0 0 1-1.5 0v-6.5A.75.75 0 0 1 8 1Z" />
+                      <path d="M4.78 4.97a.75.75 0 0 1 0 1.06L3.81 7.08h0L8 7.08a.75.75 0 0 1 0 1.5H3.81l.97.97a.75.75 0 0 1-1.06 1.06l-2.25-2.25a.75.75 0 0 1 0-1.06l2.25-2.25a.75.75 0 0 1 1.06 0Z" />
+                      <path d="M2 13.25a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1-.75-.75Z" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={e => {
+                      e.preventDefault()
+                      setEditAccount(acct)
+                    }}
+                    className="p-1.5 rounded hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors"
+                    title="Edit account"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5">
+                      <path d="M13.488 2.513a1.75 1.75 0 0 0-2.475 0L6.75 6.774a2.75 2.75 0 0 0-.596.892l-.848 2.047a.75.75 0 0 0 .98.98l2.047-.848a2.75 2.75 0 0 0 .892-.596l4.261-4.262a1.75 1.75 0 0 0 0-2.474Z" />
+                      <path d="M4.75 3.5c-.69 0-1.25.56-1.25 1.25v6.5c0 .69.56 1.25 1.25 1.25h6.5c.69 0 1.25-.56 1.25-1.25V9A.75.75 0 0 1 14 9v2.25A2.75 2.75 0 0 1 11.25 14h-6.5A2.75 2.75 0 0 1 2 11.25v-6.5A2.75 2.75 0 0 1 4.75 2H7a.75.75 0 0 1 0 1.5H4.75Z" />
+                    </svg>
+                  </button>
+                </div>
 
                 <Link
                   to={`/accounts/${acct.institution}/${acct.account_ref}`}
                   className="block"
                 >
-                  <div className="flex justify-between items-start mb-2 pr-6">
+                  <div className="flex justify-between items-start mb-2 pr-14">
                     <div className="font-medium truncate">
                       {acct.display_name || acct.name || acct.account_ref}
                     </div>
@@ -192,6 +500,9 @@ export default function Accounts() {
 
       {editAccount && (
         <AccountEditModal account={editAccount} onClose={() => setEditAccount(null)} />
+      )}
+      {importAccount && (
+        <CsvImportModal account={importAccount} onClose={() => setImportAccount(null)} />
       )}
     </div>
   )
