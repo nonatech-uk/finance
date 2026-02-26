@@ -9,6 +9,7 @@ SOURCE_PRIORITY = {
     "monzo_api": 1,
     "wise_api": 1,
     "first_direct_csv": 2,
+    "first_direct_pdf": 2,
     "wise_csv": 2,
     "marcus_csv": 2,
     "ibank": 3,
@@ -34,6 +35,11 @@ SOURCE_SUPERSEDED = [
         "institution": "first_direct",
         "account_ref": "fd_8897",
         "superseded_source": "ibank",
+    },
+    {
+        "institution": "first_direct",
+        "account_ref": "fd_8897",
+        "superseded_source": "first_direct_csv",
     },
     {
         "institution": "monzo",
@@ -118,7 +124,7 @@ SOURCE_SUPERSEDED = [
 # Cross-source pairs to check for each institution/account.
 # All Wise sources handled by SOURCE_SUPERSEDED (CSV is sole authority).
 CROSS_SOURCE_PAIRS = [
-    # First Direct — handled by SOURCE_SUPERSEDED
+    # First Direct Visa — PDF is authoritative; CSV superseded
     # Monzo — handled by SOURCE_SUPERSEDED
     # Wise — handled by SOURCE_SUPERSEDED (CSV only)
     # Marcus — handled by SOURCE_SUPERSEDED
