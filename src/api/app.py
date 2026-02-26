@@ -13,8 +13,9 @@ if _project_root not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from config.settings import settings
 from src.api.deps import close_pool, init_pool
-from src.api.routers import accounts, categories, imports, merchants, stats, transactions
+from src.api.routers import accounts, auth, categories, imports, merchants, stats, transactions
 
 
 @asynccontextmanager
@@ -34,13 +35,14 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Mount routers
+app.include_router(auth.router, prefix="/api/v1", tags=["auth"])
 app.include_router(transactions.router, prefix="/api/v1", tags=["transactions"])
 app.include_router(accounts.router, prefix="/api/v1", tags=["accounts"])
 app.include_router(categories.router, prefix="/api/v1", tags=["categories"])

@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { useCategories, useSpending, useRenameCategory, useCreateCategory, useDeleteCategory } from '../hooks/useCategories'
+import { useScope } from '../contexts/ScopeContext'
 import Badge from '../components/common/Badge'
 import CurrencyAmount from '../components/common/CurrencyAmount'
 import LoadingSpinner from '../components/common/LoadingSpinner'
@@ -28,13 +29,14 @@ function flattenTree(items: CategoryItem[], prefix = ''): { id: string; path: st
 }
 
 export default function Categories() {
+  const { scope } = useScope()
   const { data: tree, isLoading: treeLoading } = useCategories()
   const [dateFrom, setDateFrom] = useState(sixMonthsAgo())
   const [dateTo, setDateTo] = useState(today())
   const [currency, setCurrency] = useState('GBP')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
-  const { data: spending, isLoading: spendingLoading } = useSpending({ date_from: dateFrom, date_to: dateTo, currency })
+  const { data: spending, isLoading: spendingLoading } = useSpending({ date_from: dateFrom, date_to: dateTo, currency, scope })
 
   const chartData = useMemo(() => {
     if (!spending) return []

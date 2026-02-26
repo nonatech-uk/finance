@@ -1,13 +1,15 @@
 import { useParams, Link } from 'react-router-dom'
 import { useAccountDetail } from '../hooks/useAccounts'
+import { useScope } from '../contexts/ScopeContext'
 import StatCard from '../components/common/StatCard'
 import CurrencyAmount from '../components/common/CurrencyAmount'
 import Badge from '../components/common/Badge'
 import LoadingSpinner from '../components/common/LoadingSpinner'
 
 export default function AccountDetail() {
+  const { scope } = useScope()
   const { institution, accountRef } = useParams<{ institution: string; accountRef: string }>()
-  const { data, isLoading } = useAccountDetail(institution || '', accountRef || '')
+  const { data, isLoading } = useAccountDetail(institution || '', accountRef || '', scope)
 
   if (isLoading) return <LoadingSpinner />
   if (!data) return <div className="text-text-secondary">Account not found</div>

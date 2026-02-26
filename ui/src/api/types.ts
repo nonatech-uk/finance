@@ -1,3 +1,12 @@
+// ── Auth ──
+
+export interface UserInfo {
+  email: string
+  display_name: string
+  allowed_scopes: string[]
+  role: string
+}
+
 // ── Transactions ──
 
 export interface TransactionItem {

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
-from src.api.deps import get_conn
+from src.api.deps import CurrentUser, get_conn, require_admin
 from src.api.models import CsvPreviewResult, CsvPreviewTransaction, CsvMismatch, CsvImportResult
 from src.ingestion.csv_dispatch import (
     detect_format,
@@ -28,6 +28,7 @@ def csv_preview(
     institution: str = Form(...),
     account_ref: str = Form(...),
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
 ):
     """Upload a CSV and preview what would be imported.
 
@@ -71,6 +72,7 @@ def csv_confirm(
     institution: str = Form(...),
     account_ref: str = Form(...),
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
 ):
     """Confirm and execute a previously previewed CSV import.
 

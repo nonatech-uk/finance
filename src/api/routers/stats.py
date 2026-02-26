@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query
 
-from src.api.deps import get_conn
+from src.api.deps import CurrentUser, get_conn, get_current_user, scope_condition, validate_scope
 from src.api.models import AccountOption, MonthlyReport, MonthlyTotal, OverviewStats
 
 router = APIRouter()
@@ -16,18 +16,23 @@ def monthly_totals(
     institution: str | None = None,
     account_ref: str | None = None,
     currency: str = Query("GBP", description="Currency"),
+    scope: str | None = Query("personal", description="Scope filter (personal/business/all)"),
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """Monthly income/expense totals."""
     cur = conn.cursor()
+
+    effective_scope = validate_scope(scope, user)
+    scope_cond, scope_params = scope_condition(effective_scope, user, alias="a")
 
     conditions = [
         "rt.currency = %(currency)s",
         "rt.posted_at >= (CURRENT_DATE - %(months)s * INTERVAL '1 month')",
         "(a.is_archived IS NOT TRUE)",
-        "(a.scope = 'personal' OR a.scope IS NULL)",
+        scope_cond,
     ]
-    params: dict = {"currency": currency, "months": months}
+    params: dict = {"currency": currency, "months": months, **scope_params}
 
     if institution:
         conditions.append("rt.institution = %(institution)s")
@@ -63,7 +68,9 @@ def monthly_totals(
 
 @router.get("/stats/overview", response_model=OverviewStats)
 def overview(
+    scope: str | None = Query("personal", description="Scope filter (personal/business/all)"),
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """Dashboard overview statistics."""
     cur = conn.cursor()
@@ -97,14 +104,16 @@ def overview(
     categorised = cur.fetchone()[0]
     coverage = Decimal(categorised * 100) / Decimal(total_active) if total_active > 0 else Decimal(0)
 
-    # Active accounts for filter dropdown
-    cur.execute("""
+    # Active accounts for filter dropdown (scope-filtered)
+    effective_scope = validate_scope(scope, user)
+    ov_scope_cond, ov_scope_params = scope_condition(effective_scope, user, alias="a")
+    cur.execute(f"""
         SELECT a.institution, a.account_ref,
                COALESCE(a.display_name, a.account_ref) AS label
         FROM account a
-        WHERE NOT a.is_archived AND (a.scope = 'personal' OR a.scope IS NULL)
+        WHERE NOT a.is_archived AND {ov_scope_cond}
         ORDER BY COALESCE(a.display_name, a.account_ref)
-    """)
+    """, ov_scope_params)
     accounts = [
         AccountOption(institution=r[0], account_ref=r[1], label=r[2])
         for r in cur.fetchall()

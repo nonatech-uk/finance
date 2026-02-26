@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from src.api.deps import get_conn
+from src.api.deps import CurrentUser, get_conn, get_current_user, require_admin, scope_condition, validate_scope
 from src.api.models import (
     BulkCategoryUpdate,
     BulkMerchantNameUpdate,
@@ -52,7 +52,9 @@ def list_transactions(
     search: str | None = Query(None, description="Search merchant name"),
     tag: str | None = Query(None, description="Filter by tag"),
     uncategorised: bool = Query(False, description="Show only uncategorised transactions"),
+    scope: str | None = Query("personal", description="Scope filter (personal/business/all)"),
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """List deduplicated transactions with full merchant/category chain."""
     cur = conn.cursor()
@@ -140,9 +142,12 @@ def list_transactions(
             "COALESCE(tcat.full_path, cat.full_path) IS NULL"
         )
 
-    # Always exclude archived and business accounts by default
+    # Always exclude archived accounts; scope filtered by user permissions
     conditions.append("(a.is_archived IS NOT TRUE)")
-    conditions.append("(a.scope = 'personal' OR a.scope IS NULL)")
+    effective_scope = validate_scope(scope, user)
+    scope_cond, scope_params = scope_condition(effective_scope, user, alias="a")
+    conditions.append(scope_cond)
+    params.update(scope_params)
 
     where = "WHERE " + " AND ".join(conditions)
 
@@ -218,6 +223,7 @@ def list_transactions(
 def get_transaction(
     transaction_id: UUID,
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """Get full transaction detail including dedup group and economic event."""
     cur = conn.cursor()
@@ -354,6 +360,7 @@ def update_note(
     transaction_id: UUID,
     body: NoteUpdate,
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
 ):
     """Create, update, or delete a transaction note."""
     cur = conn.cursor()
@@ -389,6 +396,7 @@ def update_category(
     transaction_id: UUID,
     body: CategoryUpdate,
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
 ):
     """Create, update, or delete a transaction category override."""
     cur = conn.cursor()
@@ -429,6 +437,7 @@ def link_transfer(
     transaction_id: UUID,
     body: LinkTransferRequest,
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
 ):
     """Link two transactions as an inter-account transfer / FX conversion."""
     cur = conn.cursor()
@@ -531,6 +540,7 @@ def link_transfer(
 def unlink_event(
     event_id: UUID,
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
 ):
     """Delete an economic event and its legs (unlink transactions)."""
     cur = conn.cursor()
@@ -565,7 +575,7 @@ def unlink_event(
 
 
 @router.get("/tags")
-def list_tags(conn=Depends(get_conn)):
+def list_tags(conn=Depends(get_conn), user: CurrentUser = Depends(get_current_user)):
     """List all known tags with usage counts (for autocomplete)."""
     cur = conn.cursor()
     cur.execute("""
@@ -582,6 +592,7 @@ def add_tag(
     transaction_id: UUID,
     body: TagUpdate,
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
 ):
     """Add a tag to a transaction."""
     cur = conn.cursor()
@@ -609,6 +620,7 @@ def remove_tag(
     transaction_id: UUID,
     tag_name: str,
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
 ):
     """Remove a tag from a transaction."""
     cur = conn.cursor()
@@ -632,6 +644,7 @@ def save_split(
     transaction_id: UUID,
     body: SplitRequest,
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
 ):
     """Create or replace a split on a transaction."""
     cur = conn.cursor()
@@ -704,6 +717,7 @@ def save_split(
 def delete_split(
     transaction_id: UUID,
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
 ):
     """Remove a split, reverting to a single unsplit transaction."""
     cur = conn.cursor()
@@ -725,6 +739,7 @@ def delete_split(
 def suggest_amazon_split(
     transaction_id: UUID,
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """Suggest split lines from matched Amazon order items."""
     cur = conn.cursor()
@@ -785,7 +800,7 @@ def suggest_amazon_split(
 
 
 @router.post("/transactions/bulk/category")
-def bulk_update_category(body: BulkCategoryUpdate, conn=Depends(get_conn)):
+def bulk_update_category(body: BulkCategoryUpdate, conn=Depends(get_conn), user: CurrentUser = Depends(require_admin)):
     """Bulk set or remove category override on multiple transactions."""
     cur = conn.cursor()
     ids = [str(tid) for tid in body.transaction_ids]
@@ -822,7 +837,7 @@ def bulk_update_category(body: BulkCategoryUpdate, conn=Depends(get_conn)):
 
 
 @router.post("/transactions/bulk/merchant-name")
-def bulk_update_merchant_name(body: BulkMerchantNameUpdate, conn=Depends(get_conn)):
+def bulk_update_merchant_name(body: BulkMerchantNameUpdate, conn=Depends(get_conn), user: CurrentUser = Depends(require_admin)):
     """Bulk update display_name for all canonical merchants of given transactions."""
     cur = conn.cursor()
     ids = [str(tid) for tid in body.transaction_ids]
@@ -868,7 +883,7 @@ def bulk_update_merchant_name(body: BulkMerchantNameUpdate, conn=Depends(get_con
 
 
 @router.post("/transactions/bulk/tags/add")
-def bulk_add_tags(body: BulkTagAdd, conn=Depends(get_conn)):
+def bulk_add_tags(body: BulkTagAdd, conn=Depends(get_conn), user: CurrentUser = Depends(require_admin)):
     """Add tag(s) to multiple transactions."""
     cur = conn.cursor()
     ids = [str(tid) for tid in body.transaction_ids]
@@ -890,7 +905,7 @@ def bulk_add_tags(body: BulkTagAdd, conn=Depends(get_conn)):
 
 
 @router.post("/transactions/bulk/tags/remove")
-def bulk_remove_tag(body: BulkTagRemove, conn=Depends(get_conn)):
+def bulk_remove_tag(body: BulkTagRemove, conn=Depends(get_conn), user: CurrentUser = Depends(require_admin)):
     """Remove a single tag from multiple transactions."""
     cur = conn.cursor()
     ids = [str(tid) for tid in body.transaction_ids]
@@ -909,7 +924,7 @@ def bulk_remove_tag(body: BulkTagRemove, conn=Depends(get_conn)):
 
 
 @router.post("/transactions/bulk/tags/replace")
-def bulk_replace_tags(body: BulkTagReplace, conn=Depends(get_conn)):
+def bulk_replace_tags(body: BulkTagReplace, conn=Depends(get_conn), user: CurrentUser = Depends(require_admin)):
     """Replace all tags on selected transactions with a new set."""
     cur = conn.cursor()
     ids = [str(tid) for tid in body.transaction_ids]
@@ -940,7 +955,7 @@ def bulk_replace_tags(body: BulkTagReplace, conn=Depends(get_conn)):
 
 
 @router.post("/transactions/bulk/note")
-def bulk_update_note(body: BulkNoteUpdate, conn=Depends(get_conn)):
+def bulk_update_note(body: BulkNoteUpdate, conn=Depends(get_conn), user: CurrentUser = Depends(require_admin)):
     """Bulk set or append notes on multiple transactions."""
     cur = conn.cursor()
     ids = [str(tid) for tid in body.transaction_ids]

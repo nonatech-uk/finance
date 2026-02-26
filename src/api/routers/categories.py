@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from src.api.deps import get_conn
+from src.api.deps import CurrentUser, get_conn, get_current_user, require_admin, scope_condition, validate_scope
 from src.api.models import (
     CategoryCreate,
     CategoryDelete,
@@ -24,6 +24,7 @@ router = APIRouter()
 @router.get("/categories", response_model=CategoryTree)
 def list_categories(
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """Get the full category tree."""
     cur = conn.cursor()
@@ -75,22 +76,28 @@ def spending_by_category(
     institution: str | None = None,
     account_ref: str | None = None,
     currency: str = Query("GBP", description="Currency to report in"),
+    scope: str | None = Query("personal", description="Scope filter (personal/business/all)"),
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """Get spending aggregated by category for a date range."""
     cur = conn.cursor()
+
+    effective_scope = validate_scope(scope, user)
+    scope_cond, scope_params = scope_condition(effective_scope, user, alias="acct")
 
     conditions = [
         "rt.posted_at >= %(date_from)s",
         "rt.posted_at <= %(date_to)s",
         "rt.currency = %(currency)s",
         "(acct.exclude_from_reports IS NOT TRUE)",
-        "(acct.scope = 'personal' OR acct.scope IS NULL)",
+        scope_cond,
     ]
     params: dict = {
         "date_from": date_from,
         "date_to": date_to,
         "currency": currency,
+        **scope_params,
     }
 
     if institution:
@@ -176,7 +183,7 @@ def spending_by_category(
 
 
 @router.post("/categories")
-def create_category(body: CategoryCreate, conn=Depends(get_conn)):
+def create_category(body: CategoryCreate, conn=Depends(get_conn), user: CurrentUser = Depends(require_admin)):
     """Create a new category."""
     if body.category_type not in ("income", "expense"):
         raise HTTPException(400, "category_type must be 'income' or 'expense'")
@@ -210,7 +217,7 @@ def create_category(body: CategoryCreate, conn=Depends(get_conn)):
 
 
 @router.put("/categories/{category_id}/rename")
-def rename_category(category_id: UUID, body: CategoryRename, conn=Depends(get_conn)):
+def rename_category(category_id: UUID, body: CategoryRename, conn=Depends(get_conn), user: CurrentUser = Depends(require_admin)):
     """Rename a category, cascading path changes to children and references."""
     cur = conn.cursor()
 
@@ -299,7 +306,7 @@ def rename_category(category_id: UUID, body: CategoryRename, conn=Depends(get_co
 
 
 @router.delete("/categories/{category_id}")
-def delete_category(category_id: UUID, body: CategoryDelete, conn=Depends(get_conn)):
+def delete_category(category_id: UUID, body: CategoryDelete, conn=Depends(get_conn), user: CurrentUser = Depends(require_admin)):
     """Delete a category, reassigning all references to another category."""
     cur = conn.cursor()
 

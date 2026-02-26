@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from src.api.deps import get_conn
+from src.api.deps import CurrentUser, get_conn, get_current_user, require_admin, scope_condition, validate_scope
 from src.api.models import (
     AliasSplitRequest,
     BulkMerchantMerge,
@@ -46,7 +46,9 @@ def list_merchants(
     sort_by: str = Query("name", description="Sort column: name, category, confidence, mappings"),
     sort_dir: str = Query("asc", description="Sort direction: asc or desc"),
     limit: int = Query(50, ge=1, le=200),
+    scope: str | None = Query("personal", description="Scope filter (personal/business/all)"),
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """List canonical merchants with mapping counts."""
     VALID_SORT_COLUMNS = {
@@ -70,6 +72,9 @@ def list_merchants(
         date_filters.append("AND at2.posted_at <= %(last_used_before)s")
     date_clause = " ".join(date_filters)
 
+    effective_scope = validate_scope(scope, user)
+    scope_cond, scope_params = scope_condition(effective_scope, user, alias="acct")
+
     conditions = [
         "cm.merged_into_id IS NULL",
         f"""EXISTS (
@@ -78,11 +83,11 @@ def list_merchants(
             JOIN active_transaction at2 ON at2.id = ct2.raw_transaction_id
             JOIN account acct ON acct.institution = at2.institution AND acct.account_ref = at2.account_ref
             WHERE mrm2.canonical_merchant_id = cm.id
-              AND (acct.scope = 'personal' OR acct.scope IS NULL)
+              AND {scope_cond}
               {date_clause}
         )""",
     ]
-    params: dict = {"limit": limit + 1}
+    params: dict = {"limit": limit + 1, **scope_params}
     if last_used_after:
         params["last_used_after"] = last_used_after
     if last_used_before:
@@ -162,11 +167,14 @@ def list_merchants(
 
 
 @router.get("/merchants/export")
-def export_merchants(conn=Depends(get_conn)):
+def export_merchants(scope: str | None = Query("personal", description="Scope filter"), conn=Depends(get_conn), user: CurrentUser = Depends(get_current_user)):
     """Export all active merchants as CSV with display name, canonical name, aliases, category, last used date."""
     cur = conn.cursor()
 
-    cur.execute("""
+    effective_scope = validate_scope(scope, user)
+    exp_scope_cond, exp_scope_params = scope_condition(effective_scope, user, alias="acct")
+
+    cur.execute(f"""
         WITH merchant_last_used AS (
             SELECT
                 mrm.canonical_merchant_id,
@@ -175,7 +183,7 @@ def export_merchants(conn=Depends(get_conn)):
             JOIN cleaned_transaction ct ON ct.cleaned_merchant = mrm.cleaned_merchant
             JOIN active_transaction at2 ON at2.id = ct.raw_transaction_id
             JOIN account acct ON acct.institution = at2.institution AND acct.account_ref = at2.account_ref
-            WHERE acct.scope = 'personal' OR acct.scope IS NULL
+            WHERE {exp_scope_cond}
             GROUP BY mrm.canonical_merchant_id
         )
         SELECT
@@ -190,7 +198,7 @@ def export_merchants(conn=Depends(get_conn)):
         WHERE cm.merged_into_id IS NULL
           AND mlu.last_used IS NOT NULL
         ORDER BY COALESCE(cm.display_name, cm.name), mrm.cleaned_merchant
-    """)
+    """, exp_scope_params)
 
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -218,20 +226,24 @@ def export_merchants(conn=Depends(get_conn)):
 def list_suggestions(
     status: str = Query("pending", description="Filter by status"),
     limit: int = Query(50, ge=1, le=200),
+    scope: str | None = Query("personal", description="Scope filter"),
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """List category suggestions for review."""
     cur = conn.cursor()
 
-    # Only show suggestions for merchants that have active personal transactions
-    active_merchant_filter = """
+    effective_scope = validate_scope(scope, user)
+    sug_scope_cond, sug_scope_params = scope_condition(effective_scope, user, alias="acct")
+
+    active_merchant_filter = f"""
         EXISTS (
             SELECT 1 FROM merchant_raw_mapping mrm
             JOIN cleaned_transaction ct ON ct.cleaned_merchant = mrm.cleaned_merchant
             JOIN active_transaction at2 ON at2.id = ct.raw_transaction_id
             JOIN account acct ON acct.institution = at2.institution AND acct.account_ref = at2.account_ref
             WHERE mrm.canonical_merchant_id = cm.id
-              AND (acct.scope = 'personal' OR acct.scope IS NULL)
+              AND {sug_scope_cond}
         )
     """
 
@@ -246,7 +258,7 @@ def list_suggestions(
           AND {active_merchant_filter}
         ORDER BY cs.confidence DESC, cm.name
         LIMIT %(limit)s
-    """, {"status": status, "limit": limit})
+    """, {"status": status, "limit": limit, **sug_scope_params})
 
     columns = [desc[0] for desc in cur.description]
     rows = cur.fetchall()
@@ -260,7 +272,7 @@ def list_suggestions(
         JOIN canonical_merchant cm ON cm.id = cs.canonical_merchant_id
         WHERE cs.status = %(status)s
           AND {active_merchant_filter}
-    """, {"status": status})
+    """, {"status": status, **sug_scope_params})
     total = cur.fetchone()[0]
 
     return CategorySuggestionList(items=items, total=total)
@@ -271,6 +283,7 @@ def review_suggestion(
     suggestion_id: int,
     body: SuggestionReview,
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
 ):
     """Accept or reject a category suggestion."""
     if body.status not in ('accepted', 'rejected'):
@@ -341,7 +354,7 @@ def review_suggestion(
 
 
 @router.get("/merchants/rules", response_model=DisplayRuleList)
-def list_rules(conn=Depends(get_conn)):
+def list_rules(conn=Depends(get_conn), user: CurrentUser = Depends(get_current_user)):
     """List all merchant display rules."""
     cur = conn.cursor()
     cur.execute("SELECT id, pattern, display_name, merge_group, category_hint, priority FROM merchant_display_rule ORDER BY priority, id")
@@ -352,7 +365,7 @@ def list_rules(conn=Depends(get_conn)):
 
 
 @router.post("/merchants/rules", response_model=DisplayRuleItem)
-def create_rule(body: DisplayRuleCreate, conn=Depends(get_conn)):
+def create_rule(body: DisplayRuleCreate, conn=Depends(get_conn), user: CurrentUser = Depends(require_admin)):
     """Create a new merchant display rule."""
     import re
     try:
@@ -373,7 +386,7 @@ def create_rule(body: DisplayRuleCreate, conn=Depends(get_conn)):
 
 
 @router.put("/merchants/rules/{rule_id}", response_model=DisplayRuleItem)
-def update_rule(rule_id: int, body: DisplayRuleCreate, conn=Depends(get_conn)):
+def update_rule(rule_id: int, body: DisplayRuleCreate, conn=Depends(get_conn), user: CurrentUser = Depends(require_admin)):
     """Update an existing merchant display rule."""
     import re
     try:
@@ -395,7 +408,7 @@ def update_rule(rule_id: int, body: DisplayRuleCreate, conn=Depends(get_conn)):
 
 
 @router.delete("/merchants/rules/{rule_id}")
-def delete_rule(rule_id: int, conn=Depends(get_conn)):
+def delete_rule(rule_id: int, conn=Depends(get_conn), user: CurrentUser = Depends(require_admin)):
     """Delete a merchant display rule."""
     cur = conn.cursor()
     cur.execute("DELETE FROM merchant_display_rule WHERE id = %s", (rule_id,))
@@ -411,7 +424,7 @@ def delete_rule(rule_id: int, conn=Depends(get_conn)):
 
 
 @router.get("/merchants/split-rules", response_model=SplitRuleList)
-def list_split_rules(conn=Depends(get_conn)):
+def list_split_rules(conn=Depends(get_conn), user: CurrentUser = Depends(get_current_user)):
     """List all merchant split rules."""
     cur = conn.cursor()
     cur.execute("""
@@ -429,7 +442,7 @@ def list_split_rules(conn=Depends(get_conn)):
 
 
 @router.post("/merchants/split-rules", response_model=SplitRuleItem)
-def create_split_rule(body: SplitRuleCreate, conn=Depends(get_conn)):
+def create_split_rule(body: SplitRuleCreate, conn=Depends(get_conn), user: CurrentUser = Depends(require_admin)):
     """Create a new merchant split rule."""
     cur = conn.cursor()
 
@@ -461,7 +474,7 @@ def create_split_rule(body: SplitRuleCreate, conn=Depends(get_conn)):
 
 
 @router.put("/merchants/split-rules/{rule_id}", response_model=SplitRuleItem)
-def update_split_rule(rule_id: int, body: SplitRuleCreate, conn=Depends(get_conn)):
+def update_split_rule(rule_id: int, body: SplitRuleCreate, conn=Depends(get_conn), user: CurrentUser = Depends(require_admin)):
     """Update an existing merchant split rule."""
     cur = conn.cursor()
 
@@ -494,7 +507,7 @@ def update_split_rule(rule_id: int, body: SplitRuleCreate, conn=Depends(get_conn
 
 
 @router.delete("/merchants/split-rules/{rule_id}")
-def delete_split_rule(rule_id: int, conn=Depends(get_conn)):
+def delete_split_rule(rule_id: int, conn=Depends(get_conn), user: CurrentUser = Depends(require_admin)):
     """Delete a merchant split rule and its generated overrides."""
     cur = conn.cursor()
 
@@ -511,7 +524,7 @@ def delete_split_rule(rule_id: int, conn=Depends(get_conn)):
 
 
 @router.post("/merchants/split-rules/apply")
-def apply_split_rules(conn=Depends(get_conn)):
+def apply_split_rules(conn=Depends(get_conn), user: CurrentUser = Depends(require_admin)):
     """Apply all split rules, creating overrides for matching transactions."""
     cur = conn.cursor()
 
@@ -566,7 +579,9 @@ def apply_split_rules(conn=Depends(get_conn)):
 @router.get("/merchants/{merchant_id}", response_model=MerchantDetail)
 def get_merchant(
     merchant_id: UUID,
+    scope: str | None = Query("personal", description="Scope filter"),
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """Get full merchant detail including aliases."""
     cur = conn.cursor()
@@ -592,19 +607,21 @@ def get_merchant(
     """, (str(merchant_id),))
     aliases = [r[0] for r in cur.fetchall()]
 
-    # Get recent transactions for this merchant (personal scope only)
-    cur.execute("""
+    # Get recent transactions for this merchant (scope-filtered)
+    effective_scope = validate_scope(scope, user)
+    detail_scope_cond, detail_scope_params = scope_condition(effective_scope, user, alias="acct")
+    cur.execute(f"""
         SELECT rt.id, rt.posted_at, rt.amount, rt.currency, rt.raw_merchant,
                rt.source, rt.institution, rt.account_ref
         FROM merchant_raw_mapping mrm
         JOIN cleaned_transaction ct ON ct.cleaned_merchant = mrm.cleaned_merchant
         JOIN active_transaction rt ON rt.id = ct.raw_transaction_id
         JOIN account acct ON acct.institution = rt.institution AND acct.account_ref = rt.account_ref
-        WHERE mrm.canonical_merchant_id = %s
-          AND (acct.scope = 'personal' OR acct.scope IS NULL)
+        WHERE mrm.canonical_merchant_id = %(merchant_id)s
+          AND {detail_scope_cond}
         ORDER BY rt.posted_at DESC
         LIMIT 20
-    """, (str(merchant_id),))
+    """, {"merchant_id": str(merchant_id), **detail_scope_params})
     txn_columns = [desc[0] for desc in cur.description]
     txn_rows = cur.fetchall()
     transactions = [MerchantTransaction(**dict(zip(txn_columns, row))) for row in txn_rows]
@@ -627,6 +644,7 @@ def update_merchant_name(
     merchant_id: UUID,
     body: MerchantNameUpdate,
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
 ):
     """Update a canonical merchant's display name."""
     cur = conn.cursor()
@@ -649,6 +667,7 @@ def update_merchant_mapping(
     merchant_id: UUID,
     body: MerchantMappingUpdate,
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
 ):
     """Update a canonical merchant's category hint."""
     cur = conn.cursor()
@@ -676,7 +695,7 @@ def update_merchant_mapping(
 
 
 @router.post("/merchants/bulk-merge")
-def bulk_merge_merchants(body: BulkMerchantMerge, conn=Depends(get_conn)):
+def bulk_merge_merchants(body: BulkMerchantMerge, conn=Depends(get_conn), user: CurrentUser = Depends(require_admin)):
     """Merge multiple merchants into one, optionally setting a display name.
 
     The first merchant in the list (or the one with the most mappings) survives.
@@ -731,6 +750,7 @@ def merge_merchant(
     merchant_id: UUID,
     body: MerchantMergeRequest,
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
 ):
     """Merge another merchant into this one (this one survives)."""
     from src.categorisation.merger import merge
@@ -753,6 +773,7 @@ def split_alias(
     merchant_id: UUID,
     body: AliasSplitRequest,
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
 ):
     """Split a single alias off from this merchant into its own canonical_merchant."""
     cur = conn.cursor()
@@ -846,6 +867,7 @@ def split_alias(
 def run_categorisation(
     include_llm: bool = Query(False, description="Also run LLM categorisation"),
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
 ):
     """Trigger the categorisation engine."""
     from src.categorisation.engine import run_naming, run_source_hints, run_llm

@@ -7,6 +7,16 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+
+class UserInfo(BaseModel):
+    email: str
+    display_name: str
+    allowed_scopes: list[str]
+    role: str
+
+
 # ── Transactions ──────────────────────────────────────────────────────────────
 
 

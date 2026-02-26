@@ -19,6 +19,7 @@ export interface TransactionFilters {
   search?: string
   tag?: string
   uncategorised?: boolean
+  scope?: string
 }
 
 export function fetchTransactions(filters: TransactionFilters = {}) {

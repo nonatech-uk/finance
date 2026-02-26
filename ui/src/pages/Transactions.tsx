@@ -3,6 +3,7 @@ import { useTransactions, useTransaction, useUpdateNote, useUpdateTransactionCat
 import { useUpdateMerchantName } from '../hooks/useMerchants'
 import { useCategories } from '../hooks/useCategories'
 import { useOverview } from '../hooks/useStats'
+import { useScope } from '../contexts/ScopeContext'
 import CurrencyAmount from '../components/common/CurrencyAmount'
 import Badge from '../components/common/Badge'
 import LoadingSpinner from '../components/common/LoadingSpinner'
@@ -48,7 +49,8 @@ export default function Transactions() {
   const [sortBy, setSortBy] = useState('posted_at')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
-  const { data: overview } = useOverview()
+  const { scope } = useScope()
+  const { data: overview } = useOverview(scope)
 
   // Debounce search
   useEffect(() => {
@@ -84,7 +86,8 @@ export default function Transactions() {
     uncategorised: uncategorised || undefined,
     sort_by: sortBy,
     sort_dir: sortDir,
-  }), [debouncedSearch, filterInstitution, filterAccountRef, currency, dateFrom, dateTo, amountMin, amountMax, uncategorised, sortBy, sortDir])
+    scope,
+  }), [debouncedSearch, filterInstitution, filterAccountRef, currency, dateFrom, dateTo, amountMin, amountMax, uncategorised, sortBy, sortDir, scope])
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useTransactions(filters)
   const { data: detail, isLoading: detailLoading } = useTransaction(selectedId)

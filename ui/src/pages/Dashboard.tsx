@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { useOverview, useMonthly } from '../hooks/useStats'
 import { useSpending } from '../hooks/useCategories'
+import { useScope } from '../contexts/ScopeContext'
 import StatCard from '../components/common/StatCard'
 import LoadingSpinner from '../components/common/LoadingSpinner'
 
@@ -16,9 +17,10 @@ function today() {
 }
 
 export default function Dashboard() {
-  const { data: overview, isLoading: overviewLoading } = useOverview()
-  const { data: monthly, isLoading: monthlyLoading } = useMonthly({ months: 12, currency: 'GBP' })
-  const { data: spending } = useSpending({ date_from: threeMonthsAgo(), date_to: today(), currency: 'GBP' })
+  const { scope } = useScope()
+  const { data: overview, isLoading: overviewLoading } = useOverview(scope)
+  const { data: monthly, isLoading: monthlyLoading } = useMonthly({ months: 12, currency: 'GBP', scope })
+  const { data: spending } = useSpending({ date_from: threeMonthsAgo(), date_to: today(), currency: 'GBP', scope })
 
   const chartData = useMemo(() => {
     if (!monthly) return []

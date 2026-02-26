@@ -11,6 +11,7 @@ export interface SpendingFilters {
   currency?: string
   institution?: string
   account_ref?: string
+  scope?: string
 }
 
 export function fetchSpending(filters: SpendingFilters) {

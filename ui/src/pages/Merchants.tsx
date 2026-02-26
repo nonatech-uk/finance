@@ -16,6 +16,7 @@ import {
   useDeleteRule,
 } from '../hooks/useMerchants'
 import { useCategories } from '../hooks/useCategories'
+import { useScope } from '../contexts/ScopeContext'
 import Badge from '../components/common/Badge'
 import LoadingSpinner from '../components/common/LoadingSpinner'
 import type { CategoryItem, MerchantItem } from '../api/types'
@@ -116,7 +117,8 @@ function confidenceBadge(confidence: string | null, method: string | null) {
 // ── Suggestion Review Panel ──
 
 function SuggestionReviewPanel() {
-  const { data, isLoading } = useSuggestions('pending')
+  const { scope } = useScope()
+  const { data, isLoading } = useSuggestions('pending', scope)
   const reviewMutation = useReviewSuggestion()
 
   if (isLoading) return <LoadingSpinner />
@@ -174,7 +176,8 @@ function MerchantSlideOver({
   onClose: () => void
   categoryOptions: CategoryOption[]
 }) {
-  const { data, isLoading } = useMerchantDetail(merchantId)
+  const { scope } = useScope()
+  const { data, isLoading } = useMerchantDetail(merchantId, scope)
   const nameMutation = useUpdateMerchantName()
   const mappingMutation = useUpdateMerchantMapping()
   const mergeMutation = useMergeMerchant()
@@ -749,6 +752,7 @@ function DisplayRulesPanel({ categoryOptions }: { categoryOptions: CategoryOptio
 // ── Main Merchants Page ──
 
 export default function Merchants() {
+  const { scope } = useScope()
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [unmapped, setUnmapped] = useState(false)
@@ -784,7 +788,8 @@ export default function Merchants() {
     last_used_after: lastUsedAfter,
     sort_by: sortBy,
     sort_dir: sortDir,
-  }), [debouncedSearch, searchAliases, unmapped, lastUsedAfter, sortBy, sortDir])
+    scope,
+  }), [debouncedSearch, searchAliases, unmapped, lastUsedAfter, sortBy, sortDir, scope])
 
   const handleSort = (key: string) => {
     if (sortBy === key) {

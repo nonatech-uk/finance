@@ -13,6 +13,7 @@ export interface MerchantFilters {
   sort_by?: string
   sort_dir?: 'asc' | 'desc'
   limit?: number
+  scope?: string
 }
 
 export function fetchMerchants(filters: MerchantFilters = {}) {
@@ -25,8 +26,9 @@ export function fetchMerchants(filters: MerchantFilters = {}) {
   return apiFetch<MerchantList>(`/merchants${qs ? '?' + qs : ''}`)
 }
 
-export function fetchMerchantDetail(id: string) {
-  return apiFetch<MerchantDetail>(`/merchants/${id}`)
+export function fetchMerchantDetail(id: string, scope?: string) {
+  const qs = scope ? `?scope=${scope}` : ''
+  return apiFetch<MerchantDetail>(`/merchants/${id}${qs}`)
 }
 
 export function updateMerchantMapping(id: string, categoryHint: string | null) {
@@ -64,8 +66,10 @@ export function splitAlias(merchantId: string, alias: string) {
   )
 }
 
-export function fetchSuggestions(status = 'pending', limit = 50) {
-  return apiFetch<CategorySuggestionList>(`/merchants/suggestions?status=${status}&limit=${limit}`)
+export function fetchSuggestions(status = 'pending', limit = 50, scope?: string) {
+  const params = new URLSearchParams({ status, limit: String(limit) })
+  if (scope) params.set('scope', scope)
+  return apiFetch<CategorySuggestionList>(`/merchants/suggestions?${params.toString()}`)
 }
 
 export function reviewSuggestion(id: number, status: 'accepted' | 'rejected') {

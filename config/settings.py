@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     # Anthropic (for LLM categorisation)
     anthropic_api_key: str = ""
 
+    # Auth
+    auth_enabled: bool = True
+    dev_user_email: str = "stu@mees.st"
+    cors_origins: list[str] = [
+        "https://finance.mees.st",
+        "http://localhost:5173",
+    ]
+
     # API server
     api_host: str = "0.0.0.0"
     api_port: int = 8000

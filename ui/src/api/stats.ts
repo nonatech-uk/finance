@@ -1,8 +1,9 @@
 import { apiFetch } from './client'
 import type { MonthlyReport, OverviewStats } from './types'
 
-export function fetchOverview() {
-  return apiFetch<OverviewStats>('/stats/overview')
+export function fetchOverview(scope?: string) {
+  const qs = scope ? `?scope=${scope}` : ''
+  return apiFetch<OverviewStats>(`/stats/overview${qs}`)
 }
 
 export interface MonthlyFilters {
@@ -10,6 +11,7 @@ export interface MonthlyFilters {
   institution?: string
   account_ref?: string
   currency?: string
+  scope?: string
 }
 
 export function fetchMonthly(filters: MonthlyFilters = {}) {

@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAccounts, useUpdateAccount } from '../hooks/useAccounts'
 import { useCsvPreview, useCsvConfirm } from '../hooks/useImports'
+import { useScope } from '../contexts/ScopeContext'
 import CurrencyAmount from '../components/common/CurrencyAmount'
 import Badge from '../components/common/Badge'
 import LoadingSpinner from '../components/common/LoadingSpinner'
@@ -390,10 +391,11 @@ function CsvImportModal({
 
 
 export default function Accounts() {
+  const { scope } = useScope()
   const [showArchived, setShowArchived] = useState(false)
   const [editAccount, setEditAccount] = useState<AccountItem | null>(null)
   const [importAccount, setImportAccount] = useState<AccountItem | null>(null)
-  const { data, isLoading } = useAccounts(showArchived)
+  const { data, isLoading } = useAccounts(showArchived, scope)
 
   const grouped = useMemo(() => {
     if (!data) return {}

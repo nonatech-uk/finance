@@ -1,4 +1,5 @@
 import { NavLink } from 'react-router-dom'
+import { useScope } from '../../contexts/ScopeContext'
 
 const NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', icon: '◫' },
@@ -8,11 +9,41 @@ const NAV_ITEMS = [
   { to: '/merchants', label: 'Merchants', icon: '⊡' },
 ]
 
+const SCOPE_OPTIONS = [
+  { value: 'personal', label: 'Personal' },
+  { value: 'business', label: 'Business' },
+  { value: 'all', label: 'All' },
+]
+
 export default function Sidebar() {
+  const { scope, setScope, allowedScopes, user, isAdmin } = useScope()
+
+  const visibleScopes = SCOPE_OPTIONS.filter(
+    s => s.value === 'all' ? allowedScopes.length > 1 : allowedScopes.includes(s.value),
+  )
+  const showSwitcher = visibleScopes.length > 1
+
   return (
     <aside className="w-52 bg-bg-secondary border-r border-border flex flex-col shrink-0">
       <div className="p-4 border-b border-border">
         <h1 className="text-lg font-bold text-accent">Finance</h1>
+        {showSwitcher && (
+          <div className="flex gap-1 mt-2">
+            {visibleScopes.map(s => (
+              <button
+                key={s.value}
+                onClick={() => setScope(s.value)}
+                className={`px-2 py-0.5 text-xs rounded-full transition-colors ${
+                  scope === s.value
+                    ? 'bg-accent/15 text-accent font-medium'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       <nav className="flex-1 p-2 space-y-1">
         {NAV_ITEMS.map(({ to, label, icon }) => (
@@ -32,6 +63,17 @@ export default function Sidebar() {
           </NavLink>
         ))}
       </nav>
+      {user && (
+        <div className="p-3 border-t border-border">
+          <div className="text-sm text-text-primary truncate">{user.display_name}</div>
+          <div className="text-xs text-text-secondary truncate">{user.email}</div>
+          {isAdmin && (
+            <span className="inline-block mt-1 px-1.5 py-0.5 text-[10px] rounded bg-accent/15 text-accent">
+              admin
+            </span>
+          )}
+        </div>
+      )}
     </aside>
   )
 }

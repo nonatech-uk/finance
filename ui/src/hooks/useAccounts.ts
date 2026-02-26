@@ -2,18 +2,18 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { fetchAccounts, fetchAccountDetail, updateAccount } from '../api/accounts'
 import type { AccountUpdate } from '../api/types'
 
-export function useAccounts(includeArchived = false) {
+export function useAccounts(includeArchived = false, scope?: string) {
   return useQuery({
-    queryKey: ['accounts', { includeArchived }],
-    queryFn: () => fetchAccounts(includeArchived),
+    queryKey: ['accounts', { includeArchived, scope }],
+    queryFn: () => fetchAccounts(includeArchived, scope),
     staleTime: 5 * 60 * 1000,
   })
 }
 
-export function useAccountDetail(institution: string, accountRef: string) {
+export function useAccountDetail(institution: string, accountRef: string, scope?: string) {
   return useQuery({
-    queryKey: ['account', institution, accountRef],
-    queryFn: () => fetchAccountDetail(institution, accountRef),
+    queryKey: ['account', institution, accountRef, scope],
+    queryFn: () => fetchAccountDetail(institution, accountRef, scope),
     enabled: !!institution && !!accountRef,
   })
 }

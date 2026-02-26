@@ -40,10 +40,10 @@ export function useMerchants(filters: Omit<MerchantFilters, 'cursor' | 'offset'>
   })
 }
 
-export function useMerchantDetail(id: string | null) {
+export function useMerchantDetail(id: string | null, scope?: string) {
   return useQuery({
-    queryKey: ['merchant', id],
-    queryFn: () => fetchMerchantDetail(id!),
+    queryKey: ['merchant', id, scope],
+    queryFn: () => fetchMerchantDetail(id!, scope),
     enabled: !!id,
   })
 }
@@ -113,10 +113,10 @@ export function useSplitAlias() {
   })
 }
 
-export function useSuggestions(status = 'pending') {
+export function useSuggestions(status = 'pending', scope?: string) {
   return useQuery({
-    queryKey: ['suggestions', status],
-    queryFn: () => fetchSuggestions(status),
+    queryKey: ['suggestions', status, scope],
+    queryFn: () => fetchSuggestions(status, 50, scope),
   })
 }
 

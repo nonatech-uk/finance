@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from src.api.deps import get_conn
+from src.api.deps import CurrentUser, get_conn, get_current_user, require_admin, scope_condition, validate_scope
 from src.api.models import AccountUpdate, TransactionItem
 
 router = APIRouter()
@@ -11,8 +11,9 @@ router = APIRouter()
 @router.get("/accounts")
 def list_accounts(
     include_archived: bool = Query(False, description="Include archived accounts"),
-    scope: str | None = Query("personal", description="Filter by scope (personal/business/null for all)"),
+    scope: str | None = Query("personal", description="Scope filter (personal/business/all)"),
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """List all accounts derived from transaction data, with summaries.
 
@@ -21,11 +22,18 @@ def list_accounts(
     """
     cur = conn.cursor()
 
-    extra_filters = ""
+    conditions = []
+    params: dict = {}
+
     if not include_archived:
-        extra_filters += " AND (a.is_archived IS NOT TRUE)"
-    if scope and scope in ("personal", "business"):
-        extra_filters += f" AND (a.scope = '{scope}')"
+        conditions.append("(a.is_archived IS NOT TRUE)")
+
+    effective_scope = validate_scope(scope, user)
+    scope_cond, scope_params = scope_condition(effective_scope, user, alias="a")
+    conditions.append(scope_cond)
+    params.update(scope_params)
+
+    where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
     cur.execute(f"""
         SELECT
@@ -47,12 +55,12 @@ def list_accounts(
         LEFT JOIN account a
             ON a.institution = rt.institution
             AND a.account_ref = rt.account_ref
-        WHERE 1=1 {extra_filters}
+        {where}
         GROUP BY rt.institution, rt.account_ref, rt.currency,
                  a.name, a.display_name, a.account_type, a.is_active,
                  a.is_archived, a.exclude_from_reports, a.scope
         ORDER BY rt.institution, rt.account_ref
-    """)
+    """, params)
 
     columns = [desc[0] for desc in cur.description]
     rows = cur.fetchall()
@@ -79,6 +87,7 @@ def get_account_detail(
     account_ref: str,
     limit: int = Query(20, ge=1, le=100),
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """Get account detail with summary and recent transactions."""
     cur = conn.cursor()
@@ -155,6 +164,7 @@ def update_account(
     account_ref: str,
     body: AccountUpdate,
     conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
 ):
     """Update account metadata (display_name, is_archived, exclude_from_reports).
 
