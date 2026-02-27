@@ -258,8 +258,8 @@ def parse_pdf(filepath: str) -> list[Transaction]:
                     continue
 
                 amount = Decimal(amount_str)
-                if is_credit:
-                    amount = -amount  # Credits are negative (payments received)
+                if not is_credit:
+                    amount = -amount  # Debits are negative (purchases)
 
                 txn = Transaction(
                     received_date=received_date,

@@ -31,6 +31,11 @@ RULES = [
      "prefixes": ["BACS CREDIT ", "BACS DEBIT ", "FASTER PAYMENTS RECEIPT ",
                    "FASTER PAYMENTS ", "STANDING ORDER "]},
 
+    # First Direct PDF: strip ))) contactless indicator prefix
+    # e.g. "))) The William Bray    Guildford" -> "The William Bray    Guildford"
+    {"institution": "first_direct", "type": "regex_strip",
+     "pattern": r"^\)+\s+"},
+
     # First Direct: strip INTL CARD / INT'L + numeric reference prefix
     # e.g. "INTL CARD 05098008 ANC*ANCESTRY.CO.UK DUBLIN IE" -> "ANC*ANCESTRY.CO.UK DUBLIN IE"
     # e.g. "INT'L 1535859410 ANC*ANCESTRY.CO.UK800-404-9723" -> "ANC*ANCESTRY.CO.UK800-404-9723"
