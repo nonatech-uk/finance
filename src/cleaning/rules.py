@@ -32,11 +32,25 @@ RULES = [
      "prefixes": ["BACS CREDIT ", "BACS DEBIT ", "FASTER PAYMENTS RECEIPT ",
                    "FASTER PAYMENTS ", "STANDING ORDER "]},
 
-    # First Direct Visa: strip location + country code suffix
+    # First Direct: strip INTL CARD / INT'L + numeric reference prefix
+    # e.g. "INTL CARD 05098008 ANC*ANCESTRY.CO.UK DUBLIN IE" -> "ANC*ANCESTRY.CO.UK DUBLIN IE"
+    # e.g. "INT'L 1535859410 ANC*ANCESTRY.CO.UK800-404-9723" -> "ANC*ANCESTRY.CO.UK800-404-9723"
+    {"institution": "first_direct", "type": "regex_strip",
+     "pattern": r"^(?:INTL CARD|INT'L|NON-STERLING)\s+\d+\s+"},
+
+    # First Direct Visa (CSV): strip location + country code suffix
     # e.g. "PAYPAL *OCADORETAIL    35314369001   GB" -> "PAYPAL *OCADORETAIL"
     # Matches: 2+ spaces, then anything, then space(s), then 2-letter country code at end
     {"institution": "first_direct", "type": "regex_strip",
      "pattern": r"\s{2,}.+\s[A-Z]{2}\s*$"},
+
+    # First Direct Visa (Bankivity): strip trailing " <City> <CC>" with single spaces
+    # e.g. "ANC*ANCESTRY.CO.UK DUBLIN IE" -> "ANC*ANCESTRY.CO.UK"
+    # Only fires on card-descriptor strings (containing *) to avoid false positives
+    # on strings like "Albury Village Store Guildford GB"
+    {"institution": "first_direct", "type": "regex_strip",
+     "pattern": r"(?<=\S)\s+[A-Z][a-zA-Z.-]+(?:\s+[A-Z][a-zA-Z.-]+)?\s+[A-Z]{2}\s*$",
+     "guard": r"\*"},
 
     # General: collapse multiple spaces to single
     {"institution": "*", "type": "normalise_whitespace"},
@@ -68,6 +82,8 @@ def clean_merchant(raw_merchant: str, institution: str) -> Tuple[str, List[str]]
         rule_type = rule["type"]
 
         if rule_type == "regex_strip":
+            if "guard" in rule and not re.search(rule["guard"], result):
+                continue
             result = re.sub(rule["pattern"], "", result)
 
         elif rule_type == "regex_replace":

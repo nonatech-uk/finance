@@ -8,12 +8,12 @@ Rules-as-configuration, not hardcoded logic.
 SOURCE_PRIORITY = {
     "monzo_api": 1,
     "wise_api": 1,
-    "first_direct_bankivity": 1,
     "first_direct_csv": 2,
     "first_direct_pdf": 2,
     "wise_csv": 2,
     "marcus_csv": 2,
-    "ibank": 3,
+    "first_direct_bankivity": 3,
+    "ibank": 4,
 }
 
 
@@ -116,9 +116,11 @@ CROSS_SOURCE_PAIRS = [
         "pairs": [("wise_csv", "wise_api")],
     },
     # First Direct — Bankivity (Salt Edge) vs existing sources
+    # Bankivity dates are typically 1 day before CSV/PDF posting dates
     {
         "institution": "first_direct",
         "account_ref": "fd_5682",
+        "date_tolerance": 1,
         "pairs": [
             ("first_direct_bankivity", "first_direct_csv"),
         ],
@@ -126,6 +128,7 @@ CROSS_SOURCE_PAIRS = [
     {
         "institution": "first_direct",
         "account_ref": "fd_8897",
+        "date_tolerance": 1,
         "pairs": [
             ("first_direct_bankivity", "first_direct_pdf"),
         ],

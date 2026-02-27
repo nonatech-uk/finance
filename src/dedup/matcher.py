@@ -225,11 +225,15 @@ def find_cross_source_duplicates(
     account_ref: str,
     source_a: str,
     source_b: str,
+    date_tolerance: int = 0,
 ) -> List[tuple]:
     """Find cross-source duplicate pairs by date+amount.
 
     Uses ROW_NUMBER() positional matching within date+amount buckets
     to handle multiple same-day same-amount transactions.
+
+    Args:
+        date_tolerance: max days apart to consider a match (0 = exact).
 
     Returns list of (id_a, source_a, id_b, source_b) tuples.
     IDs are UUID objects (not strings).
@@ -270,7 +274,7 @@ def find_cross_source_duplicates(
         SELECT a.id, a.source, b.id, b.source
         FROM candidates a
         JOIN candidates b
-            ON a.posted_at = b.posted_at
+            ON ABS(a.posted_at - b.posted_at) <= %(date_tolerance)s
             AND a.amount = b.amount
             AND a.currency = b.currency
             AND a.source = %(src_a)s
@@ -282,6 +286,7 @@ def find_cross_source_duplicates(
         "refs": alias_refs,
         "src_a": source_a,
         "src_b": source_b,
+        "date_tolerance": date_tolerance,
     })
 
     return cur.fetchall()  # (uuid, str, uuid, str) tuples
@@ -534,7 +539,8 @@ def find_duplicates(
             continue
 
         for source_a, source_b in config["pairs"]:
-            pairs = find_cross_source_duplicates(conn, inst, acct, source_a, source_b)
+            tolerance = config.get("date_tolerance", 0)
+            pairs = find_cross_source_duplicates(conn, inst, acct, source_a, source_b, date_tolerance=tolerance)
 
             if not pairs:
                 continue
