@@ -57,17 +57,12 @@ SOURCE_SUPERSEDED = [
         "account_ref": "marcus",
         "superseded_source": "ibank",
     },
-    # Wise — CSV is authoritative; supersede both iBank and API
-    # (iBank categories copied to matching CSV raw_data before supersession)
+    # Wise — iBank superseded; API kept (daily sync source).
+    # Where CSV and API overlap, cross_source_date_amount dedup handles it.
     {
         "institution": "wise",
         "account_ref": "wise_CHF",
         "superseded_source": "ibank",
-    },
-    {
-        "institution": "wise",
-        "account_ref": "wise_CHF",
-        "superseded_source": "wise_api",
     },
     {
         "institution": "wise",
@@ -76,18 +71,8 @@ SOURCE_SUPERSEDED = [
     },
     {
         "institution": "wise",
-        "account_ref": "wise_EUR",
-        "superseded_source": "wise_api",
-    },
-    {
-        "institution": "wise",
         "account_ref": "wise_GBP",
         "superseded_source": "ibank",
-    },
-    {
-        "institution": "wise",
-        "account_ref": "wise_GBP",
-        "superseded_source": "wise_api",
     },
     {
         "institution": "wise",
@@ -96,35 +81,40 @@ SOURCE_SUPERSEDED = [
     },
     {
         "institution": "wise",
-        "account_ref": "wise_PLN",
-        "superseded_source": "wise_api",
-    },
-    {
-        "institution": "wise",
         "account_ref": "wise_USD",
         "superseded_source": "ibank",
-    },
-    {
-        "institution": "wise",
-        "account_ref": "wise_USD",
-        "superseded_source": "wise_api",
-    },
-    {
-        "institution": "wise",
-        "account_ref": "wise_NOK",
-        "superseded_source": "wise_api",
-    },
-    {
-        "institution": "wise",
-        "account_ref": "wise_SEK",
-        "superseded_source": "wise_api",
     },
 ]
 
 
 # Cross-source pairs to check for each institution/account.
-# All Wise sources handled by SOURCE_SUPERSEDED (CSV is sole authority).
 CROSS_SOURCE_PAIRS = [
+    # Wise — API vs CSV overlap (CSV preferred via SOURCE_PRIORITY)
+    {
+        "institution": "wise",
+        "account_ref": "wise_CHF",
+        "pairs": [("wise_csv", "wise_api")],
+    },
+    {
+        "institution": "wise",
+        "account_ref": "wise_EUR",
+        "pairs": [("wise_csv", "wise_api")],
+    },
+    {
+        "institution": "wise",
+        "account_ref": "wise_GBP",
+        "pairs": [("wise_csv", "wise_api")],
+    },
+    {
+        "institution": "wise",
+        "account_ref": "wise_PLN",
+        "pairs": [("wise_csv", "wise_api")],
+    },
+    {
+        "institution": "wise",
+        "account_ref": "wise_USD",
+        "pairs": [("wise_csv", "wise_api")],
+    },
     # First Direct — Bankivity (Salt Edge) vs existing sources
     {
         "institution": "first_direct",
