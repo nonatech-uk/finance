@@ -12,8 +12,7 @@ from typing import List, Tuple
 #   type: the cleaning operation
 #   + type-specific parameters
 RULES = [
-    # Monzo: strip location suffix (2+ spaces followed by city/country)
-    {"institution": "monzo", "type": "regex_strip", "pattern": r"\s{2,}.*$"},
+    # --- Phase 1: Institution-specific prefix strips ---
 
     # Monzo: strip pot references (pot_0000...)
     {"institution": "monzo", "type": "regex_replace",
@@ -37,6 +36,19 @@ RULES = [
     # e.g. "INT'L 1535859410 ANC*ANCESTRY.CO.UK800-404-9723" -> "ANC*ANCESTRY.CO.UK800-404-9723"
     {"institution": "first_direct", "type": "regex_strip",
      "pattern": r"^(?:INTL CARD|INT'L|NON-STERLING)\s+\d+\s+"},
+
+    # --- Phase 2: Payment processor prefix strip (after institution prefixes removed) ---
+
+    # Strip SumUp/iZettle payment processor prefix
+    # e.g. "SumUp  *Billy Doran    Dublin        IRL" -> "Billy Doran    Dublin        IRL"
+    # e.g. "SumUp *Albury MusGuildford" -> "Albury MusGuildford"
+    {"institution": "*", "type": "regex_strip",
+     "pattern": r"^(?:SumUp|SUMUP|iZ)\s*\*+\s*"},
+
+    # --- Phase 3: Location suffix strips ---
+
+    # Monzo: strip location suffix (2+ spaces followed by city/country)
+    {"institution": "monzo", "type": "regex_strip", "pattern": r"\s{2,}.*$"},
 
     # First Direct Visa (CSV): strip location + country code suffix
     # e.g. "PAYPAL *OCADORETAIL    35314369001   GB" -> "PAYPAL *OCADORETAIL"
