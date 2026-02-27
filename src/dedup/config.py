@@ -90,29 +90,35 @@ SOURCE_SUPERSEDED = [
 # Cross-source pairs to check for each institution/account.
 CROSS_SOURCE_PAIRS = [
     # Wise — API vs CSV overlap (CSV preferred via SOURCE_PRIORITY)
+    # API date is typically 1 day after CSV date
     {
         "institution": "wise",
         "account_ref": "wise_CHF",
+        "date_tolerance": 1,
         "pairs": [("wise_csv", "wise_api")],
     },
     {
         "institution": "wise",
         "account_ref": "wise_EUR",
+        "date_tolerance": 1,
         "pairs": [("wise_csv", "wise_api")],
     },
     {
         "institution": "wise",
         "account_ref": "wise_GBP",
+        "date_tolerance": 1,
         "pairs": [("wise_csv", "wise_api")],
     },
     {
         "institution": "wise",
         "account_ref": "wise_PLN",
+        "date_tolerance": 1,
         "pairs": [("wise_csv", "wise_api")],
     },
     {
         "institution": "wise",
         "account_ref": "wise_USD",
+        "date_tolerance": 1,
         "pairs": [("wise_csv", "wise_api")],
     },
     # First Direct — Bankivity (Salt Edge) vs existing sources
