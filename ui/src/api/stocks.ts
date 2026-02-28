@@ -75,9 +75,16 @@ export function deleteTrade(tradeId: string) {
   })
 }
 
-export function fetchCgt(taxYear?: string) {
-  const qs = taxYear ? `?tax_year=${taxYear}` : ''
-  return apiFetch<CgtSummary | { items: CgtSummary[] }>(`/stocks/cgt${qs}`)
+export function fetchCgt(taxYear?: string, qtyOverrides?: Record<string, string>) {
+  const params = new URLSearchParams()
+  if (taxYear) params.set('tax_year', taxYear)
+  if (qtyOverrides) {
+    for (const [holdingId, qty] of Object.entries(qtyOverrides)) {
+      params.set(`qty_${holdingId}`, qty)
+    }
+  }
+  const qs = params.toString()
+  return apiFetch<CgtSummary | { items: CgtSummary[] }>(`/stocks/cgt${qs ? '?' + qs : ''}`)
 }
 
 export function fetchTaxYears() {

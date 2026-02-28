@@ -761,8 +761,8 @@ export default function Merchants() {
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [mergeName, setMergeName] = useState('')
-  const [sortBy, setSortBy] = useState('name')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [sortBy, setSortBy] = useState('last_used')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [datePreset, setDatePreset] = useState<'12m' | '2y' | 'all'>('all')
   const runCategorisation = useRunCategorisation()
   const bulkMerge = useBulkMergeMerchants()
@@ -872,8 +872,8 @@ export default function Merchants() {
         </div>
       </div>
 
-      {/* Suggestion review panel */}
-      <SuggestionReviewPanel />
+      {/* Suggestion review panel — hidden for now */}
+      {/* <SuggestionReviewPanel /> */}
 
       {/* Display Rules */}
       <DisplayRulesPanel categoryOptions={categoryOptions} />
@@ -980,6 +980,7 @@ export default function Merchants() {
               <SortableHeader label="Category" sortKey="category" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Confidence" sortKey="confidence" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Mappings" sortKey="mappings" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} align="right" />
+              <SortableHeader label="Last Used" sortKey="last_used" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
               <th className="pb-2">Assign Category</th>
             </tr>
           </thead>
@@ -1133,6 +1134,7 @@ function MerchantRow({
         {confidenceBadge(m.category_confidence, m.category_method)}
       </td>
       <td className="py-2 pr-4 text-right text-text-secondary">{m.mapping_count}</td>
+      <td className="py-2 pr-4 text-text-secondary whitespace-nowrap">{m.last_transaction_date || '—'}</td>
       <td className="py-2">
         <CategorySelect
           value={m.category_hint || ''}

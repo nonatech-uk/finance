@@ -1,9 +1,33 @@
-"""Stock price fetching and caching via Yahoo Finance."""
+"""Stock price fetching and caching.
+
+Uses Yahoo Finance v8 API directly (no yfinance dependency).
+"""
 
 from datetime import date
 from decimal import Decimal
 
-import yfinance as yf
+import requests
+
+
+YAHOO_QUOTE_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+
+
+def _fetch_price(symbol: str) -> Decimal | None:
+    """Fetch the current price for a single symbol from Yahoo Finance."""
+    resp = requests.get(
+        YAHOO_QUOTE_URL.format(symbol=symbol),
+        params={"range": "1d", "interval": "1d"},
+        headers={"User-Agent": USER_AGENT},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    meta = data.get("chart", {}).get("result", [{}])[0].get("meta", {})
+    price = meta.get("regularMarketPrice")
+    if price is None:
+        raise ValueError(f"No price in response for {symbol}")
+    return Decimal(str(price))
 
 
 def fetch_current_prices(conn) -> dict:
@@ -18,20 +42,13 @@ def fetch_current_prices(conn) -> dict:
     if not holdings:
         return {"updated": 0, "errors": []}
 
-    symbols = [h[1] for h in holdings]
-    symbol_map = {h[1]: {"id": h[0], "currency": h[2]} for h in holdings}
-
-    # Batch download — single HTTP call for all tickers
-    tickers = yf.Tickers(" ".join(symbols))
     today = date.today()
     updated = 0
     errors = []
 
-    for symbol in symbols:
+    for holding_id, symbol, currency in holdings:
         try:
-            ticker = tickers.tickers[symbol]
-            price = Decimal(str(ticker.fast_info.last_price))
-            holding = symbol_map[symbol]
+            price = _fetch_price(symbol)
 
             cur.execute("""
                 INSERT INTO stock_price (holding_id, price_date, close_price, currency, source)
@@ -39,7 +56,7 @@ def fetch_current_prices(conn) -> dict:
                 ON CONFLICT (holding_id, price_date)
                 DO UPDATE SET close_price = EXCLUDED.close_price,
                               fetched_at = now()
-            """, (str(holding["id"]), today, price, holding["currency"]))
+            """, (str(holding_id), today, price, currency))
             updated += 1
         except Exception as e:
             errors.append({"symbol": symbol, "error": str(e)})

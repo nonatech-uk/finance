@@ -109,6 +109,7 @@ export interface BulkTagReplaceResult extends BulkOperationResult {
 // ── Accounts ──
 
 export interface AccountItem {
+  id: string | null
   institution: string
   account_ref: string
   currency: string
@@ -166,6 +167,7 @@ export interface MerchantItem {
   category_method: string | null
   category_confidence: string | null
   mapping_count: number
+  last_transaction_date: string | null
 }
 
 export interface MerchantList {
@@ -410,4 +412,89 @@ export interface TaxYearIncomeItem {
   gross_income: string
   personal_allowance: string
   notes: string | null
+}
+
+// ── Other Assets ──
+
+export interface AssetHoldingItem {
+  id: string
+  name: string
+  asset_type: string
+  currency: string
+  scope: string
+  is_active: boolean
+  notes: string | null
+  latest_gross_value: string | null
+  latest_tax_payable: string | null
+  latest_net_value: string | null
+  valuation_date: string | null
+}
+
+export interface AssetValuationItem {
+  id: string
+  holding_id: string
+  valuation_date: string
+  gross_value: string
+  tax_payable: string
+  net_value: string
+  notes: string | null
+  created_at: string
+}
+
+export interface AssetsSummary {
+  total_gross_value: string
+  total_tax_payable: string
+  total_net_value: string
+  holdings: AssetHoldingItem[]
+}
+
+// ── Tag Rules ──
+
+export interface TagRuleItem {
+  id: number
+  name: string
+  date_from: string | null
+  date_to: string | null
+  account_ids: string[]
+  merchant_pattern: string | null
+  category_pattern: string | null
+  tags: string[]
+  is_active: boolean
+  priority: number
+  created_at: string
+  updated_at: string
+}
+
+export interface TagRuleList {
+  items: TagRuleItem[]
+}
+
+export interface TagRuleCreate {
+  name: string
+  date_from?: string | null
+  date_to?: string | null
+  account_ids?: string[]
+  merchant_pattern?: string | null
+  category_pattern?: string | null
+  tags: string[]
+  is_active?: boolean
+  priority?: number
+}
+
+export interface TagRuleUpdate {
+  name?: string
+  date_from?: string | null
+  date_to?: string | null
+  account_ids?: string[]
+  merchant_pattern?: string | null
+  category_pattern?: string | null
+  tags?: string[]
+  is_active?: boolean
+  priority?: number
+}
+
+export interface TagRuleApplyResult {
+  rules_applied: number
+  tags_created: number
+  tags_removed: number
 }

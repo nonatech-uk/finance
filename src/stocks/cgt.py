@@ -113,6 +113,8 @@ def _round2(v: Decimal) -> Decimal:
 def compute_cgt(
     trades: list[dict],
     income_by_year: dict[str, Decimal] | None = None,
+    hypothetical_prices: dict[str, Decimal] | None = None,
+    quantity_overrides: dict[str, Decimal] | None = None,
 ) -> dict[str, TaxYearSummary]:
     """Compute CGT from a chronological list of trades.
 
@@ -120,14 +122,23 @@ def compute_cgt(
         trades: list of dicts with keys: id, holding_id, symbol, trade_type,
                 trade_date, quantity, price_per_share, total_cost, fees
         income_by_year: mapping of tax_year string -> gross_income Decimal
+        hypothetical_prices: mapping of holding_id -> current price per share.
+            If provided, any remaining shares in each pool will be treated as
+            a hypothetical liquidation at today's price for planning purposes.
+        quantity_overrides: mapping of holding_id -> number of shares to
+            hypothetically sell (defaults to full position if not specified).
 
     Returns:
         dict mapping tax_year -> TaxYearSummary
     """
     if income_by_year is None:
         income_by_year = {}
+    if hypothetical_prices is None:
+        hypothetical_prices = {}
+    if quantity_overrides is None:
+        quantity_overrides = {}
 
-    if not trades:
+    if not trades and not hypothetical_prices:
         return {}
 
     # Sort: by date, then buys before sells on same day
@@ -263,6 +274,37 @@ def compute_cgt(
                 if ty not in summaries:
                     summaries[ty] = TaxYearSummary(tax_year=ty)
                 summaries[ty].disposals.append(disposal)
+
+    # Hypothetical liquidation: sell remaining pool at current price
+    if hypothetical_prices:
+        today = date.today()
+        ty = get_tax_year(today)
+        if ty not in summaries:
+            summaries[ty] = TaxYearSummary(tax_year=ty)
+
+        for h_id, price in hypothetical_prices.items():
+            pool = pools.get(h_id)
+            if not pool or pool.total_shares <= 0:
+                continue
+            # Allow partial liquidation via quantity_overrides
+            available = pool.total_shares
+            qty = min(quantity_overrides.get(h_id, available), available)
+            if qty <= 0:
+                continue
+            proceeds = _round2(qty * price)
+            cost = pool.remove_shares(qty)
+            disposal = Disposal(
+                trade_id="hypothetical",
+                holding_id=h_id,
+                symbol=pool.symbol,
+                trade_date=today,
+                quantity=qty,
+                proceeds=proceeds,
+                cost_basis=_round2(cost),
+                gain_loss=_round2(proceeds - cost),
+                match_type="hypothetical",
+            )
+            summaries[ty].disposals.append(disposal)
 
     # Aggregate and calculate tax per year
     for ty, summary in summaries.items():

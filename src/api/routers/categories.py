@@ -369,6 +369,16 @@ def delete_category(category_id: UUID, body: CategoryDelete, conn=Depends(get_co
         (str(body.reassign_to), str(category_id)),
     )
 
+    # 3b. Reassign source_category_mapping
+    cur.execute(
+        "UPDATE source_category_mapping SET category_id = %s WHERE category_id = %s",
+        (str(body.reassign_to), str(category_id)),
+    )
+    cur.execute("""
+        UPDATE source_category_mapping SET category_id = %s
+        WHERE category_id IN (SELECT id FROM category WHERE full_path LIKE %s)
+    """, (str(body.reassign_to), old_prefix + "%"))
+
     # 4. Reparent child categories to the deleted category's parent
     cur.execute("SELECT parent_id FROM category WHERE id = %s", (str(category_id),))
     parent_id = cur.fetchone()[0]

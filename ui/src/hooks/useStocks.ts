@@ -61,10 +61,10 @@ export function useDeleteTrade() {
   })
 }
 
-export function useCgt(taxYear?: string) {
+export function useCgt(taxYear?: string, qtyOverrides?: Record<string, string>) {
   return useQuery({
-    queryKey: ['stocks', 'cgt', taxYear],
-    queryFn: () => fetchCgt(taxYear),
+    queryKey: ['stocks', 'cgt', taxYear, qtyOverrides],
+    queryFn: () => fetchCgt(taxYear, qtyOverrides),
     staleTime: 5 * 60 * 1000,
   })
 }

@@ -37,6 +37,7 @@ def list_accounts(
 
     cur.execute(f"""
         SELECT
+            a.id AS account_id,
             rt.institution,
             rt.account_ref,
             rt.currency,
@@ -56,7 +57,7 @@ def list_accounts(
             ON a.institution = rt.institution
             AND a.account_ref = rt.account_ref
         {where}
-        GROUP BY rt.institution, rt.account_ref, rt.currency,
+        GROUP BY a.id, rt.institution, rt.account_ref, rt.currency,
                  a.name, a.display_name, a.account_type, a.is_active,
                  a.is_archived, a.exclude_from_reports, a.scope
         ORDER BY rt.institution, rt.account_ref
@@ -68,6 +69,9 @@ def list_accounts(
     for row in rows:
         item = dict(zip(columns, row))
         # Rename account_name -> name for model
+        item["id"] = item.pop("account_id", None)
+        if item["id"] is not None:
+            item["id"] = str(item["id"])
         item["name"] = item.pop("account_name", None)
         # Convert types for JSON
         if item["balance"] is not None:
@@ -77,6 +81,38 @@ def list_accounts(
         if item["latest_date"] is not None:
             item["latest_date"] = str(item["latest_date"])
         items.append(item)
+
+    # Virtual account: Other Assets (sum of latest asset valuations)
+    if effective_scope in (None, "personal", "all"):
+        cur.execute("""
+            SELECT DISTINCT ON (av.holding_id)
+                av.gross_value, av.tax_payable, av.valuation_date
+            FROM asset_valuation av
+            JOIN asset_holding ah ON ah.id = av.holding_id
+            WHERE ah.is_active AND ah.scope = 'personal'
+            ORDER BY av.holding_id, av.valuation_date DESC, av.created_at DESC
+        """)
+        asset_rows = cur.fetchall()
+        if asset_rows:
+            total_net = sum(r[0] - r[1] for r in asset_rows)
+            latest_date = max(r[2] for r in asset_rows)
+            earliest_date = min(r[2] for r in asset_rows)
+            items.append({
+                "institution": "assets",
+                "account_ref": "other",
+                "currency": "GBP",
+                "transaction_count": len(asset_rows),
+                "earliest_date": str(earliest_date),
+                "latest_date": str(latest_date),
+                "balance": str(total_net),
+                "name": "Other Assets",
+                "display_name": "Other Assets",
+                "account_type": "asset",
+                "is_active": True,
+                "is_archived": False,
+                "exclude_from_reports": False,
+                "scope": "personal",
+            })
 
     return {"items": items}
 

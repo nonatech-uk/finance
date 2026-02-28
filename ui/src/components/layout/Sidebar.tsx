@@ -6,8 +6,10 @@ const NAV_ITEMS = [
   { to: '/transactions', label: 'Transactions', icon: '⇄' },
   { to: '/accounts', label: 'Accounts', icon: '◰' },
   { to: '/stocks', label: 'Stocks', icon: '◈' },
+  { to: '/assets', label: 'Other Assets', icon: '◆' },
   { to: '/categories', label: 'Categories', icon: '⊞' },
   { to: '/merchants', label: 'Merchants', icon: '⊡' },
+  { to: '/tag-rules', label: 'Tag Rules', icon: '⊟' },
 ]
 
 const SCOPE_OPTIONS = [

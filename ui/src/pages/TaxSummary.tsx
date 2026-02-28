@@ -1,8 +1,15 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useCgt, useTaxYears, useUpdateTaxYear } from '../hooks/useStocks'
 import LoadingSpinner from '../components/common/LoadingSpinner'
 import type { CgtSummary } from '../api/types'
+
+interface HoldingMeta {
+  holding_id: string
+  symbol: string
+  max_shares: string
+  current_price: string | null
+}
 
 function currentTaxYear(): string {
   const now = new Date()
@@ -14,9 +21,21 @@ function currentTaxYear(): string {
 
 export default function TaxSummary() {
   const [selectedYear, setSelectedYear] = useState(currentTaxYear())
-  const { data: cgtData, isLoading: cgtLoading } = useCgt(selectedYear)
   const { data: taxYearsData } = useTaxYears()
   const updateTaxYear = useUpdateTaxYear()
+
+  // Quantity overrides: holding_id -> qty string
+  const [qtyOverrides, setQtyOverrides] = useState<Record<string, string>>({})
+  // Debounced overrides sent to API
+  const [debouncedOverrides, setDebouncedOverrides] = useState<Record<string, string>>({})
+
+  const { data: cgtData, isLoading: cgtLoading } = useCgt(selectedYear, debouncedOverrides)
+
+  // Debounce quantity changes (300ms)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedOverrides(qtyOverrides), 300)
+    return () => clearTimeout(timer)
+  }, [qtyOverrides])
 
   // Income form state
   const [incomeForm, setIncomeForm] = useState({ gross_income: '', personal_allowance: '12570' })
@@ -37,6 +56,27 @@ export default function TaxSummary() {
     }
   }, [taxYearsData, selectedYear])
 
+  // Init qty overrides from holdings metadata (default to max)
+  const holdings: HoldingMeta[] = useMemo(() => {
+    if (!cgtData || !('holdings' in cgtData)) return []
+    return (cgtData as any).holdings ?? []
+  }, [cgtData])
+
+  // Initialise overrides to max_shares on first load
+  useEffect(() => {
+    if (holdings.length > 0 && Object.keys(qtyOverrides).length === 0) {
+      const initial: Record<string, string> = {}
+      for (const h of holdings) {
+        initial[h.holding_id] = h.max_shares
+      }
+      setQtyOverrides(initial)
+    }
+  }, [holdings]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleQtyChange = useCallback((holdingId: string, value: string) => {
+    setQtyOverrides(prev => ({ ...prev, [holdingId]: value }))
+  }, [])
+
   const handleSaveIncome = (e: React.FormEvent) => {
     e.preventDefault()
     updateTaxYear.mutate(
@@ -50,7 +90,7 @@ export default function TaxSummary() {
     )
   }
 
-  // Build list of available tax years from CGT data + current year
+  // Build list of available tax years
   const availableYears = useMemo(() => {
     const years = new Set<string>()
     years.add(currentTaxYear())
@@ -134,6 +174,49 @@ export default function TaxSummary() {
         )}
       </form>
 
+      {/* Hypothetical Disposal Planner */}
+      {holdings.length > 0 && (
+        <div className="bg-bg-card border border-border rounded-lg p-5">
+          <h3 className="text-sm font-medium text-text-secondary mb-3">Shares to Sell (Planning)</h3>
+          <div className="space-y-3">
+            {holdings.map(h => {
+              const max = parseFloat(h.max_shares)
+              const current = parseFloat(qtyOverrides[h.holding_id] ?? h.max_shares)
+              const price = h.current_price ? parseFloat(h.current_price) : null
+              return (
+                <div key={h.holding_id} className="flex items-center gap-4">
+                  <span className="font-medium w-16">{h.symbol}</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max={max}
+                    step={max > 100 ? 1 : 0.1}
+                    value={current}
+                    onChange={e => handleQtyChange(h.holding_id, e.target.value)}
+                    className="flex-1 accent-accent"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    max={max}
+                    step="1"
+                    value={qtyOverrides[h.holding_id] ?? h.max_shares}
+                    onChange={e => handleQtyChange(h.holding_id, e.target.value)}
+                    className="w-20 px-2 py-1 text-sm text-right rounded border border-border bg-bg-primary text-text-primary tabular-nums"
+                  />
+                  <span className="text-xs text-text-secondary w-20 text-right">/ {max}</span>
+                  {price !== null && (
+                    <span className="text-xs text-text-secondary w-28 text-right">
+                      ${(current * price).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    </span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {/* CGT Calculation */}
       {cgtLoading ? (
         <LoadingSpinner />
@@ -195,14 +278,14 @@ export default function TaxSummary() {
                   <tr key={i} className="border-b border-border last:border-0 hover:bg-bg-hover">
                     <td className="px-4 py-2 font-medium">{d.symbol}</td>
                     <td className="px-4 py-2 tabular-nums">{d.trade_date}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{parseFloat(d.quantity)}</td>
+                    <td className="px-4 py-2 text-right tabular-nums">{parseFloat(d.quantity).toLocaleString()}</td>
                     <td className="px-4 py-2 text-right tabular-nums">${fmt(d.proceeds)}</td>
                     <td className="px-4 py-2 text-right tabular-nums">${fmt(d.cost_basis)}</td>
                     <td className={`px-4 py-2 text-right tabular-nums font-medium ${gl >= 0 ? 'text-income' : 'text-expense'}`}>
                       {gl >= 0 ? '+' : ''}${fmt(d.gain_loss)}
                     </td>
                     <td className="px-4 py-2 text-text-secondary text-xs">
-                      {d.match_type === 'same_day' ? 'Same-day' : 'S.104 Pool'}
+                      {d.match_type === 'same_day' ? 'Same-day' : d.match_type === 'hypothetical' ? 'If sold today' : 'S.104 Pool'}
                     </td>
                   </tr>
                 )

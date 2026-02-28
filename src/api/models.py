@@ -201,6 +201,7 @@ class BulkNoteUpdate(BaseModel):
 
 
 class AccountItem(BaseModel):
+    id: UUID | None = None
     institution: str
     account_ref: str
     currency: str
@@ -241,6 +242,7 @@ class MerchantItem(BaseModel):
     category_method: str | None = None
     category_confidence: Decimal | None = None
     mapping_count: int = 0
+    last_transaction_date: date | None = None
 
 
 class MerchantList(BaseModel):
@@ -613,3 +615,116 @@ class TaxYearIncomeUpdate(BaseModel):
     gross_income: Decimal
     personal_allowance: Decimal = Decimal("12570")
     notes: str | None = None
+
+
+# ── Other Assets ─────────────────────────────────────────────────────────────
+
+
+class AssetHoldingItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    asset_type: str
+    currency: str
+    scope: str
+    is_active: bool
+    notes: str | None = None
+    latest_gross_value: Decimal | None = None
+    latest_tax_payable: Decimal | None = None
+    latest_net_value: Decimal | None = None
+    valuation_date: date | None = None
+
+
+class AssetHoldingCreate(BaseModel):
+    name: str
+    asset_type: str = "other"
+    currency: str = "GBP"
+    scope: str = "personal"
+    notes: str | None = None
+
+
+class AssetHoldingUpdate(BaseModel):
+    name: str | None = None
+    asset_type: str | None = None
+    is_active: bool | None = None
+    notes: str | None = None
+
+
+class AssetValuationItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    holding_id: UUID
+    valuation_date: date
+    gross_value: Decimal
+    tax_payable: Decimal
+    net_value: Decimal
+    notes: str | None = None
+    created_at: datetime
+
+
+class AssetValuationCreate(BaseModel):
+    valuation_date: date
+    gross_value: Decimal
+    tax_payable: Decimal = Decimal("0")
+    notes: str | None = None
+
+
+class AssetsSummary(BaseModel):
+    total_gross_value: Decimal
+    total_tax_payable: Decimal
+    total_net_value: Decimal
+    holdings: list[AssetHoldingItem]
+
+
+# ── Tag Rules ────────────────────────────────────────────────────────────────
+
+
+class TagRuleItem(BaseModel):
+    id: int
+    name: str
+    date_from: date | None = None
+    date_to: date | None = None
+    account_ids: list[UUID] = []
+    merchant_pattern: str | None = None
+    category_pattern: str | None = None
+    tags: list[str] = []
+    is_active: bool = True
+    priority: int = 100
+    created_at: datetime
+    updated_at: datetime
+
+
+class TagRuleList(BaseModel):
+    items: list[TagRuleItem]
+
+
+class TagRuleCreate(BaseModel):
+    name: str
+    date_from: date | None = None
+    date_to: date | None = None
+    account_ids: list[UUID] = []
+    merchant_pattern: str | None = None
+    category_pattern: str | None = None
+    tags: list[str]
+    is_active: bool = True
+    priority: int = 100
+
+
+class TagRuleUpdate(BaseModel):
+    name: str | None = None
+    date_from: date | None = None
+    date_to: date | None = None
+    account_ids: list[UUID] | None = None
+    merchant_pattern: str | None = None
+    category_pattern: str | None = None
+    tags: list[str] | None = None
+    is_active: bool | None = None
+    priority: int | None = None
+
+
+class TagRuleApplyResult(BaseModel):
+    rules_applied: int
+    tags_created: int
+    tags_removed: int

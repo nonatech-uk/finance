@@ -10,6 +10,9 @@ import Merchants from './pages/Merchants'
 import Portfolio from './pages/Portfolio'
 import HoldingDetail from './pages/HoldingDetail'
 import TaxSummary from './pages/TaxSummary'
+import Assets from './pages/Assets'
+import AssetDetail from './pages/AssetDetail'
+import TagRules from './pages/TagRules'
 
 export default function App() {
   return (
@@ -25,8 +28,11 @@ export default function App() {
             <Route path="/stocks" element={<Portfolio />} />
             <Route path="/stocks/tax" element={<TaxSummary />} />
             <Route path="/stocks/:holdingId" element={<HoldingDetail />} />
+            <Route path="/assets" element={<Assets />} />
+            <Route path="/assets/:holdingId" element={<AssetDetail />} />
             <Route path="/categories" element={<Categories />} />
             <Route path="/merchants" element={<Merchants />} />
+            <Route path="/tag-rules" element={<TagRules />} />
             <Route path="*" element={<div className="text-text-secondary">Page not found</div>} />
           </Routes>
         </Shell>

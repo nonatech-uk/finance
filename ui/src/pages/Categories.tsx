@@ -262,6 +262,7 @@ function CategoryManagePanel({
     }
     deleteMutation.mutate({ id: cat.id, reassignTo }, {
       onSuccess: () => { setConfirmingDelete(false); onDeselect() },
+      onError: () => { setConfirmingDelete(false) },
     })
   }
 
@@ -331,6 +332,11 @@ function CategoryManagePanel({
         {deleteMutation.isSuccess && (
           <p className="text-xs text-green-400">
             Deleted. {deleteMutation.data.merchants_moved} merchants reassigned.
+          </p>
+        )}
+        {deleteMutation.isError && (
+          <p className="text-xs text-red-400">
+            Delete failed: {(deleteMutation.error as Error)?.message || 'Unknown error'}
           </p>
         )}
       </div>

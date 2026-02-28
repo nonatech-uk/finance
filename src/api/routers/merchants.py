@@ -56,6 +56,7 @@ def list_merchants(
         "category": "cm.category_hint",
         "confidence": "cm.category_confidence",
         "mappings": "COUNT(mrm.cleaned_merchant)",
+        "last_used": "MAX(at.posted_at)",
     }
     if sort_by not in VALID_SORT_COLUMNS:
         raise HTTPException(400, f"Invalid sort_by: {sort_by}")
@@ -124,7 +125,7 @@ def list_merchants(
         pagination_clause = "LIMIT %(limit)s"
     else:
         # Offset pagination for other columns
-        nulls = "NULLS LAST" if sort_by in ("category", "confidence") else ""
+        nulls = "NULLS LAST" if sort_by in ("category", "confidence", "last_used") else ""
         order_clause = f"ORDER BY {sort_col_sql} {direction} {nulls}, cm.name ASC"
         pagination_clause = "LIMIT %(limit)s OFFSET %(offset)s"
         params["offset"] = offset
@@ -139,9 +140,12 @@ def list_merchants(
             cm.category_hint,
             cm.category_method,
             cm.category_confidence,
-            COUNT(mrm.cleaned_merchant) AS mapping_count
+            COUNT(DISTINCT mrm.cleaned_merchant) AS mapping_count,
+            MAX(at.posted_at) AS last_transaction_date
         FROM canonical_merchant cm
         LEFT JOIN merchant_raw_mapping mrm ON mrm.canonical_merchant_id = cm.id
+        LEFT JOIN cleaned_transaction ct ON ct.cleaned_merchant = mrm.cleaned_merchant
+        LEFT JOIN active_transaction at ON at.id = ct.raw_transaction_id
         {where}
         GROUP BY cm.id, cm.name, cm.display_name, cm.category_hint,
                  cm.category_method, cm.category_confidence

@@ -3,7 +3,7 @@
 from decimal import Decimal
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from src.api.deps import CurrentUser, get_conn, get_current_user, require_admin
 from src.api.models import (
@@ -365,11 +365,19 @@ def get_portfolio(
 
 @router.get("/stocks/cgt")
 def get_cgt(
+    request: Request,
     tax_year: str | None = Query(None, description="e.g. '2025/26'"),
     conn=Depends(get_conn),
     user: CurrentUser = Depends(get_current_user),
 ):
-    """CGT summary — all tax years or a specific one."""
+    """CGT summary — all tax years or a specific one.
+
+    Includes hypothetical liquidation of all open positions at current
+    market prices for tax planning purposes.
+
+    Accepts qty_{holding_id}=N query params to override the number of
+    shares to hypothetically sell per holding.
+    """
     cur = conn.cursor()
 
     # Load all trades with holding info
@@ -386,18 +394,61 @@ def get_cgt(
     cur.execute("SELECT tax_year, gross_income FROM tax_year_income")
     income_by_year = {r[0]: r[1] for r in cur.fetchall()}
 
+    # Load current prices for hypothetical liquidation
+    from src.stocks.prices import get_latest_prices
+    latest = get_latest_prices(conn)
+    hypothetical_prices = {
+        h_id: p["close_price"] for h_id, p in latest.items()
+    }
+
+    # Parse quantity overrides from query params: qty_{holding_id}=N
+    quantity_overrides = {}
+    for key, val in request.query_params.items():
+        if key.startswith("qty_"):
+            h_id = key[4:]
+            try:
+                quantity_overrides[h_id] = Decimal(val)
+            except Exception:
+                pass
+
+    # Compute current shares per holding (for max_shares in response)
+    cur.execute("""
+        SELECT holding_id,
+               SUM(CASE WHEN trade_type = 'buy' THEN quantity ELSE -quantity END) AS shares
+        FROM stock_trade
+        GROUP BY holding_id
+    """)
+    shares_by_holding = {str(r[0]): r[1] for r in cur.fetchall()}
+
     from src.stocks.cgt import compute_cgt
-    summaries = compute_cgt(trades, income_by_year)
+    summaries = compute_cgt(trades, income_by_year, hypothetical_prices, quantity_overrides)
+
+    # Build holdings metadata for the UI (symbol, max_shares, current_price)
+    cur.execute("SELECT id, symbol FROM stock_holding WHERE is_active")
+    holdings_meta = []
+    for h_id_uuid, symbol in cur.fetchall():
+        h_id_str = str(h_id_uuid)
+        max_shares = shares_by_holding.get(h_id_str, Decimal("0"))
+        price_info = latest.get(h_id_str)
+        holdings_meta.append({
+            "holding_id": h_id_str,
+            "symbol": symbol,
+            "max_shares": str(max_shares),
+            "current_price": str(price_info["close_price"]) if price_info else None,
+        })
 
     if tax_year:
         if tax_year in summaries:
             s = summaries[tax_year]
-            return _summary_to_dict(s)
+            result = _summary_to_dict(s)
+            result["holdings"] = holdings_meta
+            return result
         else:
             # Return empty summary for requested year
             return {
                 "tax_year": tax_year,
                 "disposals": [],
+                "holdings": holdings_meta,
                 "total_gains": "0.00",
                 "total_losses": "0.00",
                 "net_gains": "0.00",
@@ -413,7 +464,7 @@ def get_cgt(
 
     # Return all years, sorted
     items = [_summary_to_dict(s) for s in sorted(summaries.values(), key=lambda s: s.tax_year)]
-    return {"items": items}
+    return {"items": items, "holdings": holdings_meta}
 
 
 def _summary_to_dict(s) -> dict:
