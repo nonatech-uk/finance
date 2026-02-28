@@ -116,6 +116,7 @@ function confidenceBadge(confidence: string | null, method: string | null) {
 
 // ── Suggestion Review Panel ──
 
+// @ts-ignore: temporarily unused
 function SuggestionReviewPanel() {
   const { scope } = useScope()
   const { data, isLoading } = useSuggestions('pending', scope)
