@@ -7,6 +7,9 @@ import Accounts from './pages/Accounts'
 import AccountDetail from './pages/AccountDetail'
 import Categories from './pages/Categories'
 import Merchants from './pages/Merchants'
+import Portfolio from './pages/Portfolio'
+import HoldingDetail from './pages/HoldingDetail'
+import TaxSummary from './pages/TaxSummary'
 
 export default function App() {
   return (
@@ -19,6 +22,9 @@ export default function App() {
             <Route path="/transactions" element={<Transactions />} />
             <Route path="/accounts" element={<Accounts />} />
             <Route path="/accounts/:institution/:accountRef" element={<AccountDetail />} />
+            <Route path="/stocks" element={<Portfolio />} />
+            <Route path="/stocks/tax" element={<TaxSummary />} />
+            <Route path="/stocks/:holdingId" element={<HoldingDetail />} />
             <Route path="/categories" element={<Categories />} />
             <Route path="/merchants" element={<Merchants />} />
             <Route path="*" element={<div className="text-text-secondary">Page not found</div>} />

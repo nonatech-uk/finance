@@ -327,3 +327,87 @@ export interface OverviewStats {
   date_range_from: string | null
   date_range_to: string | null
 }
+
+// ── Stocks ──
+
+export interface StockHoldingItem {
+  id: string
+  symbol: string
+  name: string
+  country: string
+  currency: string
+  scope: string
+  is_active: boolean
+  notes: string | null
+  current_shares: string | null
+  average_cost: string | null
+  current_price: string | null
+  current_value: string | null
+  total_cost: string | null
+  unrealised_pnl: string | null
+  unrealised_pnl_pct: string | null
+  price_date: string | null
+}
+
+export interface StockHoldingList {
+  items: StockHoldingItem[]
+}
+
+export interface StockTradeItem {
+  id: string
+  holding_id: string
+  trade_type: string
+  trade_date: string
+  quantity: string
+  price_per_share: string
+  total_cost: string
+  fees: string
+  currency: string
+  notes: string | null
+  created_at: string
+}
+
+export interface PortfolioSummary {
+  total_value: string
+  total_cost: string
+  unrealised_pnl: string
+  unrealised_pnl_pct: string
+  holdings: StockHoldingItem[]
+  price_date: string | null
+}
+
+export interface DisposalItem {
+  trade_id: string
+  holding_id: string
+  symbol: string
+  trade_date: string
+  quantity: string
+  proceeds: string
+  cost_basis: string
+  gain_loss: string
+  match_type: string
+}
+
+export interface CgtSummary {
+  tax_year: string
+  disposals: DisposalItem[]
+  total_gains: string
+  total_losses: string
+  net_gains: string
+  exempt_amount: string
+  taxable_gains: string
+  gross_income: string | null
+  basic_rate_amount: string
+  higher_rate_amount: string
+  basic_rate_tax: string
+  higher_rate_tax: string
+  total_tax: string
+}
+
+export interface TaxYearIncomeItem {
+  id: string
+  tax_year: string
+  gross_income: string
+  personal_allowance: string
+  notes: string | null
+}

@@ -262,8 +262,38 @@ def main():
         print(f"  ERROR linking transfers: {e}")
         traceback.print_exc()
 
-    # Step 8: Healthcheck pings (only on source-level success)
-    print("\nStep 8: Healthcheck pings...")
+    # Step 8: Refresh stock prices
+    print("\nStep 8: Refresh stock prices...")
+    try:
+        from src.stocks.prices import fetch_current_prices
+        conn = psycopg2.connect(settings.dsn)
+        try:
+            result = fetch_current_prices(conn)
+            print(f"  Updated: {result['updated']} prices, "
+                  f"Errors: {len(result['errors'])}")
+            for err in result["errors"]:
+                print(f"    {err['symbol']}: {err['error']}")
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"  ERROR refreshing prices: {e}")
+        traceback.print_exc()
+
+    # Step 9: Sync business transactions to Xero
+    print("\nStep 9: Xero sync...")
+    try:
+        from scripts.xero_sync import sync_to_xero
+        from src.ingestion.xero import AuthRequiredError as XeroAuthRequired
+        result = sync_to_xero(headless=True)
+        print(f"  Result: {result['pushed']} pushed, {result['failed']} failed")
+    except XeroAuthRequired:
+        print("  Xero token expired — manual re-auth needed (python scripts/xero_setup.py)")
+    except Exception as e:
+        print(f"  ERROR syncing to Xero: {e}")
+        traceback.print_exc()
+
+    # Step 10: Healthcheck pings (only on source-level success)
+    print("\nStep 10: Healthcheck pings...")
     if wise_ok:
         ping_healthcheck(hc_wise, "Wise")
     else:

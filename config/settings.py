@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     monzo_token_url: str = "https://api.monzo.com/oauth2/token"
     monzo_api_base: str = "https://api.monzo.com"
 
+    # Xero
+    xero_client_id: str = ""
+    xero_client_secret: str = ""
+    xero_redirect_uri: str = "http://localhost:9877/oauth/callback"
+    xero_token_file: str = "xero_tokens.json"
+    xero_tenant_id: str = ""
+    xero_bank_account_id: str = ""
+    xero_default_account_code: str = "400"
+
     # Anthropic (for LLM categorisation)
     anthropic_api_key: str = ""
 

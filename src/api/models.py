@@ -495,3 +495,121 @@ class OverviewStats(BaseModel):
     accounts: list[AccountOption]
     date_range_from: date | None = None
     date_range_to: date | None = None
+
+
+# ── Stocks ───────────────────────────────────────────────────────────────────
+
+
+class StockHoldingItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    symbol: str
+    name: str
+    country: str
+    currency: str
+    scope: str
+    is_active: bool
+    notes: str | None = None
+    current_shares: Decimal | None = None
+    average_cost: Decimal | None = None
+    current_price: Decimal | None = None
+    current_value: Decimal | None = None
+    total_cost: Decimal | None = None
+    unrealised_pnl: Decimal | None = None
+    unrealised_pnl_pct: Decimal | None = None
+    price_date: date | None = None
+
+
+class StockHoldingCreate(BaseModel):
+    symbol: str
+    name: str
+    country: str = "US"
+    currency: str = "USD"
+    scope: str = "personal"
+    notes: str | None = None
+
+
+class StockHoldingUpdate(BaseModel):
+    name: str | None = None
+    country: str | None = None
+    is_active: bool | None = None
+    notes: str | None = None
+
+
+class StockTradeItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    holding_id: UUID
+    trade_type: str
+    trade_date: date
+    quantity: Decimal
+    price_per_share: Decimal
+    total_cost: Decimal
+    fees: Decimal
+    currency: str
+    notes: str | None = None
+    created_at: datetime
+
+
+class StockTradeCreate(BaseModel):
+    trade_type: str
+    trade_date: date
+    quantity: Decimal
+    price_per_share: Decimal
+    fees: Decimal = Decimal("0")
+    notes: str | None = None
+
+
+class PortfolioSummary(BaseModel):
+    total_value: Decimal
+    total_cost: Decimal
+    unrealised_pnl: Decimal
+    unrealised_pnl_pct: Decimal
+    holdings: list[StockHoldingItem]
+    price_date: date | None = None
+
+
+class DisposalItem(BaseModel):
+    trade_id: UUID
+    holding_id: UUID
+    symbol: str
+    trade_date: date
+    quantity: Decimal
+    proceeds: Decimal
+    cost_basis: Decimal
+    gain_loss: Decimal
+    match_type: str
+
+
+class CgtSummary(BaseModel):
+    tax_year: str
+    disposals: list[DisposalItem]
+    total_gains: Decimal
+    total_losses: Decimal
+    net_gains: Decimal
+    exempt_amount: Decimal
+    taxable_gains: Decimal
+    gross_income: Decimal | None = None
+    basic_rate_amount: Decimal
+    higher_rate_amount: Decimal
+    basic_rate_tax: Decimal
+    higher_rate_tax: Decimal
+    total_tax: Decimal
+
+
+class TaxYearIncomeItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    tax_year: str
+    gross_income: Decimal
+    personal_allowance: Decimal
+    notes: str | None = None
+
+
+class TaxYearIncomeUpdate(BaseModel):
+    gross_income: Decimal
+    personal_allowance: Decimal = Decimal("12570")
+    notes: str | None = None
