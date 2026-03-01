@@ -64,7 +64,7 @@ def create_tag_rule(
     cur.execute(f"""
         INSERT INTO tag_rule (name, date_from, date_to, account_ids, merchant_pattern,
                               category_pattern, tags, is_active, priority)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s::uuid[], %s, %s, %s, %s, %s)
         RETURNING {_COLS}
     """, (
         body.name,
@@ -112,7 +112,9 @@ def update_tag_rule(
     set_parts = []
     params = {"rule_id": rule_id}
     for key, val in data.items():
-        set_parts.append(f"{key} = %({key})s")
+        # uuid[] column needs explicit cast — psycopg2 sends text[]
+        cast = "::uuid[]" if key == "account_ids" else ""
+        set_parts.append(f"{key} = %({key})s{cast}")
         params[key] = val
     set_parts.append("updated_at = now()")
 
@@ -163,8 +165,11 @@ def apply_tag_rules(
     """
     cur = conn.cursor()
 
-    # Step 1: Clear all rule-generated tags
-    cur.execute("DELETE FROM transaction_tag WHERE tag_rule_id IS NOT NULL")
+    # Step 1: Clear tags only for ACTIVE rules (inactive rules' tags are preserved)
+    cur.execute("""
+        DELETE FROM transaction_tag
+        WHERE tag_rule_id IN (SELECT id FROM tag_rule WHERE is_active)
+    """)
     tags_removed = cur.rowcount
 
     # Step 2: Load active rules

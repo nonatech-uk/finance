@@ -17,6 +17,10 @@ env/
 .env
 .wise
 tokens.json
+.claude/
+26-postgres.sql
+PLAN.md
+xero_tokens.json
 
 # IDE
 .idea/

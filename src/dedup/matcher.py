@@ -15,7 +15,7 @@ Three rules:
 from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 
-from src.dedup.config import CROSS_SOURCE_PAIRS, SOURCE_SUPERSEDED, get_priority
+from src.dedup.config import CROSS_SOURCE_PAIRS, INTERNAL_DEDUP_SOURCES, SOURCE_SUPERSEDED, get_priority
 
 
 def find_superseded_transactions(
@@ -292,11 +292,12 @@ def find_cross_source_duplicates(
     return cur.fetchall()  # (uuid, str, uuid, str) tuples
 
 
-def find_ibank_internal_duplicates(
+def find_internal_duplicates(
     conn,
+    source: str,
     institution: Optional[str] = None,
 ) -> List[tuple]:
-    """Find iBank internal duplicates (same date+amount+merchant within same account).
+    """Find internal duplicates for a source (same date+amount+merchant within same account).
 
     Returns list of (keep_id, dupe_id) tuples as UUID objects.
     """
@@ -316,7 +317,7 @@ def find_ibank_internal_duplicates(
             AND a.raw_merchant = b.raw_merchant
             AND a.source = b.source
             AND a.id < b.id
-        WHERE a.source = 'ibank'
+        WHERE a.source = %(source)s
           AND NOT EXISTS (
               SELECT 1 FROM dedup_group_member dgm
               WHERE dgm.raw_transaction_id = a.id AND NOT dgm.is_preferred
@@ -327,7 +328,7 @@ def find_ibank_internal_duplicates(
           )
           {where_extra}
         ORDER BY a.posted_at, a.amount
-    """, {"inst": institution} if institution else {})
+    """, {"source": source, "inst": institution} if institution else {"source": source})
 
     return cur.fetchall()  # (uuid, uuid) tuples
 
@@ -507,27 +508,31 @@ def find_duplicates(
 
     print()
 
-    # Rule 1: iBank internal duplicates (run FIRST so cross-source
-    # matching sees consolidated iBank records, not dupes)
-    print("  iBank internal duplicates:")
-    ibank_pairs = find_ibank_internal_duplicates(conn, institution=institution)
-    print(f"    Found {len(ibank_pairs)} pairs")
+    # Rule 1: Internal duplicates (run FIRST so cross-source
+    # matching sees consolidated records, not dupes)
+    for source in INTERNAL_DEDUP_SOURCES:
+        pairs = find_internal_duplicates(conn, source, institution=institution)
+        if not pairs:
+            continue
 
-    if not dry_run:
-        for keep_id, dupe_id in ibank_pairs:
-            gid = create_dedup_group(
-                conn,
-                [(keep_id, "ibank"), (dupe_id, "ibank")],
-                "ibank_internal",
-                confidence=0.95,
-            )
-            if gid:
-                stats["ibank_internal_groups"] += 1
-            else:
-                stats["skipped"] += 1
-        conn.commit()
-    else:
-        stats["ibank_internal_groups"] = len(ibank_pairs)
+        print(f"  {source} internal duplicates:")
+        print(f"    Found {len(pairs)} pairs")
+
+        if not dry_run:
+            for keep_id, dupe_id in pairs:
+                gid = create_dedup_group(
+                    conn,
+                    [(keep_id, source), (dupe_id, source)],
+                    "ibank_internal",
+                    confidence=0.95,
+                )
+                if gid:
+                    stats["ibank_internal_groups"] += 1
+                else:
+                    stats["skipped"] += 1
+            conn.commit()
+        else:
+            stats["ibank_internal_groups"] += len(pairs)
 
     # Rule 2: Cross-source date+amount matching
     print()

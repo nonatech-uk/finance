@@ -87,6 +87,11 @@ SOURCE_SUPERSEDED = [
 ]
 
 
+# Sources that can have internal duplicates (same date+amount+merchant
+# within the same account). Salt Edge pending/posted = two IDs for one txn.
+INTERNAL_DEDUP_SOURCES = ["ibank", "first_direct_bankivity"]
+
+
 # Cross-source pairs to check for each institution/account.
 CROSS_SOURCE_PAIRS = [
     # Wise — API vs CSV overlap (CSV preferred via SOURCE_PRIORITY)
