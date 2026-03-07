@@ -406,7 +406,7 @@ function TransactionRow({ txn, isSelected, isChecked, selectMode, accountLabel, 
   )
 }
 
-function TransactionDetailContent({ detail }: { detail: import('../api/types').TransactionDetail }) {
+export function TransactionDetailContent({ detail }: { detail: import('../api/types').TransactionDetail }) {
   return (
     <div className="space-y-5 text-sm">
       {/* Basic info */}

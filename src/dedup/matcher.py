@@ -57,7 +57,6 @@ def find_superseded_transactions(
         WHERE institution = %(inst)s
           AND account_ref = ANY(%(refs)s)
           AND source != %(src)s
-          AND source != 'synthetic'
     """, {
         "inst": institution,
         "refs": alias_refs,

@@ -84,6 +84,9 @@ SOURCE_SUPERSEDED = [
         "account_ref": "wise_USD",
         "superseded_source": "ibank",
     },
+    # Cash — iBank Cash Withdrawal / STARTING BALANCE entries are selectively
+    # suppressed in link_cash_withdrawals.py (not blanket source_superseded,
+    # because iBank also has unique spending entries we want to keep).
 ]
 
 

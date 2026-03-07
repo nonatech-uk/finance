@@ -758,3 +758,21 @@ class SettingsUpdate(BaseModel):
     caldav_enabled: bool | None = None
     caldav_tag: str | None = None
     caldav_password: str | None = None  # empty string = disable auth
+
+
+# ── Cash Accounts ───────────────────────────────────────────────────────────
+
+
+class CashTransactionCreate(BaseModel):
+    account_ref: str       # e.g. "cash_gbp"
+    posted_at: date
+    amount: Decimal        # negative = spending, positive = income/deposit
+    description: str
+    category_path: str | None = None
+    tags: list[str] = []
+    note: str | None = None
+
+
+class CashBalanceReset(BaseModel):
+    target_balance: Decimal
+    posted_at: date

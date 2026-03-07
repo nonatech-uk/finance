@@ -166,17 +166,24 @@ def get_account_detail(
             rt.posted_at, rt.amount, rt.currency,
             rt.raw_merchant, rt.raw_memo,
             ct.cleaned_merchant,
-            cm.id AS canonical_merchant_id,
-            cm.name AS canonical_merchant_name,
+            COALESCE(cm_override.id, cm.id) AS canonical_merchant_id,
+            COALESCE(cm_override.display_name, cm_override.name, cm.display_name, cm.name) AS canonical_merchant_name,
             mrm.match_type AS merchant_match_type,
-            cat.full_path AS category_path,
-            cat.name AS category_name,
-            cat.category_type
+            COALESCE(tcat.full_path, cat_override.full_path, cat.full_path) AS category_path,
+            COALESCE(tcat.name, cat_override.name, cat.name) AS category_name,
+            COALESCE(tcat.category_type, cat_override.category_type, cat.category_type) AS category_type,
+            (tco.raw_transaction_id IS NOT NULL) AS category_is_override,
+            (tmo.raw_transaction_id IS NOT NULL) AS merchant_is_override
         FROM active_transaction rt
         LEFT JOIN cleaned_transaction ct ON ct.raw_transaction_id = rt.id
         LEFT JOIN merchant_raw_mapping mrm ON mrm.cleaned_merchant = ct.cleaned_merchant
         LEFT JOIN canonical_merchant cm ON cm.id = mrm.canonical_merchant_id
+        LEFT JOIN transaction_merchant_override tmo ON tmo.raw_transaction_id = rt.id
+        LEFT JOIN canonical_merchant cm_override ON cm_override.id = tmo.canonical_merchant_id
         LEFT JOIN category cat ON cat.full_path = cm.category_hint
+        LEFT JOIN category cat_override ON cat_override.full_path = cm_override.category_hint
+        LEFT JOIN transaction_category_override tco ON tco.raw_transaction_id = rt.id
+        LEFT JOIN category tcat ON tcat.full_path = tco.category_path
         WHERE rt.institution = %s AND rt.account_ref = %s
         ORDER BY rt.posted_at DESC, rt.id DESC
         LIMIT %s
