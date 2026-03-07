@@ -1,8 +1,17 @@
 """Finance API — FastAPI application."""
 
+import logging
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+# Configure CalDAV logging at INFO level for debugging
+_caldav_log = logging.getLogger("src.caldav")
+_caldav_log.setLevel(logging.INFO)
+if not _caldav_log.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+    _caldav_log.addHandler(_h)
 
 # Ensure project root is on sys.path so `config.*` and `src.*` imports work
 # when running via uvicorn from any directory.

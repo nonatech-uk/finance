@@ -101,12 +101,19 @@ def get_todo_transaction(conn, uid: str, tag: str = "todo") -> dict | None:
 
 
 def get_ctag(conn, tag: str = "todo") -> str:
-    """Get current CTag — changes when tags or notes change."""
+    """Get current CTag — changes when tags or notes change.
+
+    Returns epoch seconds as a string — safe to embed in a URI
+    (no spaces or special chars), which is required for DAV sync-tokens.
+    """
     cur = conn.cursor()
     cur.execute("""
         SELECT COALESCE(
-            MAX(GREATEST(tt.created_at, COALESCE(tn.updated_at, tt.created_at))),
-            '1970-01-01'::timestamptz
+            FLOOR(EXTRACT(EPOCH FROM MAX(GREATEST(
+                tt.created_at,
+                COALESCE(tn.updated_at, tt.created_at)
+            ))))::bigint,
+            0
         )::text
         FROM transaction_tag tt
         LEFT JOIN transaction_note tn ON tn.raw_transaction_id = tt.raw_transaction_id

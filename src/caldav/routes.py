@@ -8,11 +8,14 @@ PROPFIND/REPORT HTTP methods.
 """
 
 import base64
+import logging
 import xml.etree.ElementTree as ET
 
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route, Router
+
+log = logging.getLogger(__name__)
 
 from src.api import deps
 from src.caldav.queries import (
@@ -41,6 +44,17 @@ from src.caldav.xml_helpers import (
 
 CALENDAR_PATH = "/caldav/calendars/tasks/"
 CALENDAR_COLOR = "#4A90D9FF"
+
+
+async def _log_request(request: Request, label: str) -> bytes:
+    """Log a CalDAV request and return the body bytes."""
+    body = await request.body()
+    depth = request.headers.get("Depth", "-")
+    log.info("CalDAV %s %s %s Depth=%s body=%d bytes",
+             label, request.method, request.url.path, depth, len(body))
+    if body and log.isEnabledFor(logging.DEBUG):
+        log.debug("CalDAV body:\n%s", body.decode("utf-8", errors="replace")[:2000])
+    return body
 
 
 def _get_conn():
@@ -79,11 +93,17 @@ def _check_auth(request: Request, conn) -> Response | None:
     if not password:
         return None  # No password set — open access
 
+    _401_headers = {
+        "WWW-Authenticate": 'Basic realm="Finance CalDAV"',
+        "DAV": "1, 3, calendar-access",
+    }
+
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Basic "):
+        log.info("CalDAV auth: no Basic auth header (got '%s')", auth_header[:20] if auth_header else "")
         return Response(
             status_code=401,
-            headers={"WWW-Authenticate": 'Basic realm="Finance CalDAV"'},
+            headers=_401_headers,
             content=b"Authentication required",
         )
 
@@ -93,17 +113,20 @@ def _check_auth(request: Request, conn) -> Response | None:
     except (ValueError, UnicodeDecodeError):
         return Response(
             status_code=401,
-            headers={"WWW-Authenticate": 'Basic realm="Finance CalDAV"'},
+            headers=_401_headers,
             content=b"Invalid credentials",
         )
 
     if provided_password != password:
+        log.warning("CalDAV auth failed: password mismatch (got %d chars, expected %d chars)",
+                    len(provided_password), len(password))
         return Response(
             status_code=401,
-            headers={"WWW-Authenticate": 'Basic realm="Finance CalDAV"'},
+            headers=_401_headers,
             content=b"Invalid credentials",
         )
 
+    log.info("CalDAV auth OK for user %s", decoded.split(":", 1)[0])
     return None
 
 
@@ -136,7 +159,7 @@ async def handle_root(request: Request) -> Response:
         if denied:
             return denied
 
-        body = await request.body()
+        body = await _log_request(request, "ROOT")
         props = parse_propfind(body)
 
         response_props = []
@@ -158,6 +181,7 @@ async def handle_root(request: Request) -> Response:
                     response_props.append(known[key])
                 else:
                     not_found.append(key)
+                    log.info("CalDAV ROOT: unknown prop %s:%s", ns, local)
 
         resp = {"href": "/caldav/", "props": response_props}
         if not_found:
@@ -184,7 +208,7 @@ async def handle_principal(request: Request) -> Response:
         if denied:
             return denied
 
-        body = await request.body()
+        body = await _log_request(request, "PRINCIPAL")
         props = parse_propfind(body)
 
         known = {
@@ -205,6 +229,7 @@ async def handle_principal(request: Request) -> Response:
                     response_props.append(known[key])
                 else:
                     not_found.append(key)
+                    log.info("CalDAV PRINCIPAL: unknown prop %s:%s", ns, local)
 
         resp = {"href": "/caldav/principal/", "props": response_props}
         if not_found:
@@ -231,7 +256,7 @@ async def handle_calendar_home(request: Request) -> Response:
         if denied:
             return denied
 
-        body = await request.body()
+        body = await _log_request(request, "CAL-HOME")
         depth = request.headers.get("Depth", "0")
 
         home_props = [
@@ -271,8 +296,11 @@ async def handle_calendar(request: Request) -> Response:
         if request.method == "REPORT":
             return await _handle_report(request, conn)
 
+        if request.method == "PROPPATCH":
+            return await _handle_proppatch(request)
+
         # PROPFIND
-        body = await request.body()
+        body = await _log_request(request, "CALENDAR")
         depth = request.headers.get("Depth", "0")
         props = parse_propfind(body)
 
@@ -292,6 +320,7 @@ async def handle_calendar(request: Request) -> Response:
                     response_props.append(cal_known[key])
                 else:
                     not_found.append(key)
+                    log.info("CalDAV CALENDAR: unknown prop %s:%s", ns, local)
 
         responses = [{"href": CALENDAR_PATH, "props": response_props}]
         if not_found:
@@ -315,10 +344,39 @@ async def handle_calendar(request: Request) -> Response:
         _put_conn(conn)
 
 
+async def _handle_proppatch(request: Request) -> Response:
+    """Handle PROPPATCH — Apple sets calendar color, order, etc.
+
+    We acknowledge success but don't persist anything (read-only server).
+    """
+    body = await _log_request(request, "PROPPATCH")
+    # Parse the set properties and return 200 OK for each
+    try:
+        root = ET.fromstring(body)
+        set_el = root.find(f"{{{DAV}}}set")
+        prop_el = set_el.find(f"{{{DAV}}}prop") if set_el is not None else None
+        props = []
+        if prop_el is not None:
+            for child in prop_el:
+                ns = child.tag.split("}")[0].lstrip("{") if "}" in child.tag else DAV
+                local = child.tag.split("}")[1] if "}" in child.tag else child.tag
+                props.append((ns, local))
+    except Exception:
+        props = []
+
+    # Build multistatus response acknowledging all props
+    response_props = [(ns, local, None) for ns, local in props]
+    resp = {"href": CALENDAR_PATH, "props": response_props}
+    return _xml_response(multistatus(resp))
+
+
 async def _handle_report(request: Request, conn) -> Response:
-    body = await request.body()
+    body = await _log_request(request, "REPORT")
     report = parse_report(body)
     tag = get_tag_name(conn)
+    log.info("CalDAV REPORT type=%s props=%s hrefs=%d sync_token=%s",
+             report["report_type"], report["props"],
+             len(report["hrefs"]), report.get("sync_token"))
 
     if report["report_type"] == "sync-collection":
         return _sync_collection(conn, report, tag)
@@ -382,7 +440,7 @@ def _sync_collection(conn, report: dict, tag: str) -> Response:
     """
     ctag = get_ctag(conn, tag)
     client_token = report.get("sync_token") or ""
-    sync_token_url = f"https://finance.mees.st/caldav/sync/{ctag}"
+    sync_token_url = f"urn:finance:sync:{ctag}"
 
     # If client has current token, nothing changed
     if client_token == sync_token_url:
@@ -437,11 +495,14 @@ async def handle_vtodo(request: Request) -> Response:
 
         uid = request.path_params["uid"]
         tag = get_tag_name(conn)
+        log.info("CalDAV VTODO %s uid=%s", request.method, uid)
 
         if request.method == "GET":
             return _get_vtodo(conn, uid, tag)
         elif request.method == "PUT":
             body = await request.body()
+            if log.isEnabledFor(logging.DEBUG):
+                log.debug("CalDAV PUT body:\n%s", body.decode("utf-8", errors="replace")[:2000])
             return _put_vtodo(conn, uid, body, tag)
         elif request.method == "DELETE":
             return _delete_vtodo(conn, uid, tag)
@@ -533,7 +594,7 @@ def _calendar_props(ctag: str) -> list:
 
 def _calendar_prop_map(ctag: str) -> dict:
     """Map of (namespace, localname) → (namespace, localname, value) for the tasks calendar."""
-    sync_token = f"https://finance.mees.st/caldav/sync/{ctag}"
+    sync_token = f"urn:finance:sync:{ctag}"
     return {
         (DAV, "resourcetype"): (
             DAV, "resourcetype",
@@ -568,9 +629,25 @@ def _privilege_set() -> list[ET.Element]:
 
 
 async def handle_well_known(request: Request) -> Response:
-    """Handle /.well-known/caldav — Apple sends PROPFIND here, not just GET."""
+    """Handle /.well-known/caldav — Apple sends PROPFIND here, not just GET.
+
+    Apple doesn't carry auth through 301 redirects, so we need to
+    handle auth HERE before redirecting. If no auth is provided,
+    return 401 so Apple prompts for credentials and retries this URL.
+    """
+    log.info("CalDAV WELL-KNOWN %s %s", request.method, request.url.path)
     if request.method == "OPTIONS":
         return _options_response()
+
+    # Check auth before redirecting — Apple won't carry creds through 301
+    conn = _get_conn()
+    try:
+        denied = _check_auth(request, conn)
+        if denied:
+            return denied
+    finally:
+        _put_conn(conn)
+
     # Redirect for both GET and PROPFIND
     return Response(
         status_code=301,
@@ -583,6 +660,7 @@ async def handle_well_known(request: Request) -> Response:
 
 async def handle_server_root(request: Request) -> Response:
     """Handle PROPFIND/OPTIONS on / — Apple checks DAV capabilities here."""
+    log.info("CalDAV SERVER-ROOT %s %s", request.method, request.url.path)
     if request.method == "OPTIONS":
         return _options_response()
 
@@ -640,6 +718,6 @@ caldav_router = Router(routes=[
     Route("/", endpoint=handle_root, methods=["PROPFIND", "OPTIONS"]),
     Route("/principal/", endpoint=handle_principal, methods=["PROPFIND", "OPTIONS"]),
     Route("/calendars/", endpoint=handle_calendar_home, methods=["PROPFIND", "OPTIONS"]),
-    Route("/calendars/tasks/", endpoint=handle_calendar, methods=["PROPFIND", "REPORT", "OPTIONS"]),
+    Route("/calendars/tasks/", endpoint=handle_calendar, methods=["PROPFIND", "PROPPATCH", "REPORT", "OPTIONS"]),
     Route("/calendars/tasks/{uid}.ics", endpoint=handle_vtodo, methods=["GET", "PUT", "DELETE", "OPTIONS"]),
 ])

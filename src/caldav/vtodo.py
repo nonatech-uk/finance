@@ -84,13 +84,27 @@ def transaction_to_vtodo(txn: dict) -> str:
         desc_parts.append(f"Memo: {memo}")
     description = "\\n".join(escape_text(p) for p in desc_parts)
 
+    note_updated = txn.get("note_updated_at")
+
     dtstamp = tag_created.strftime("%Y%m%dT%H%M%SZ") if hasattr(tag_created, "strftime") else "20260101T000000Z"
     due_date = posted.strftime("%Y%m%d") if hasattr(posted, "strftime") else str(posted).replace("-", "")
+
+    # CREATED = when the tag was added
+    created_ts = dtstamp  # same as DTSTAMP
+
+    # LAST-MODIFIED = latest of tag creation or note update
+    if note_updated and hasattr(note_updated, "strftime"):
+        last_modified_ts = note_updated.strftime("%Y%m%dT%H%M%SZ")
+    else:
+        last_modified_ts = dtstamp
 
     lines = [
         "BEGIN:VTODO",
         fold_line(f"UID:{uid}"),
         fold_line(f"DTSTAMP:{dtstamp}"),
+        fold_line(f"CREATED:{created_ts}"),
+        fold_line(f"LAST-MODIFIED:{last_modified_ts}"),
+        "SEQUENCE:0",
         fold_line(f"SUMMARY:{escape_text(summary)}"),
     ]
     if description:
