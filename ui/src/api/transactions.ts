@@ -18,6 +18,7 @@ export interface TransactionFilters {
   currency?: string
   search?: string
   tag?: string
+  tag_pattern?: string
   uncategorised?: boolean
   scope?: string
 }

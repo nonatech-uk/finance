@@ -228,8 +228,23 @@ def main():
         print(f"  ERROR applying split rules: {e}")
         traceback.print_exc()
 
-    # Step 7: Link inter-account transfers and FX conversions
-    print("\nStep 7: Link transfers & FX events...")
+    # Step 7: Apply tag rules
+    print("\nStep 7: Apply tag rules...")
+    try:
+        from src.api.routers.tag_rules import reconcile_tag_rules
+        conn = psycopg2.connect(settings.dsn)
+        try:
+            result = reconcile_tag_rules(conn)
+            print(f"  Rules: {result['rules_applied']}, "
+                  f"Created: {result['tags_created']}, Removed: {result['tags_removed']}")
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"  ERROR applying tag rules: {e}")
+        traceback.print_exc()
+
+    # Step 8: Link inter-account transfers and FX conversions
+    print("\nStep 8: Link transfers & FX events...")
     try:
         from scripts.link_fx_events import (
             find_fx_pairs, find_same_ccy_pairs, find_visa_payment_pairs,
@@ -262,8 +277,8 @@ def main():
         print(f"  ERROR linking transfers: {e}")
         traceback.print_exc()
 
-    # Step 8: Refresh stock prices
-    print("\nStep 8: Refresh stock prices...")
+    # Step 9: Refresh stock prices
+    print("\nStep 9: Refresh stock prices...")
     try:
         from src.stocks.prices import fetch_current_prices
         conn = psycopg2.connect(settings.dsn)
@@ -279,8 +294,8 @@ def main():
         print(f"  ERROR refreshing prices: {e}")
         traceback.print_exc()
 
-    # Step 9: Sync business transactions to Xero
-    print("\nStep 9: Xero sync...")
+    # Step 10: Sync business transactions to Xero
+    print("\nStep 10: Xero sync...")
     try:
         from scripts.xero_sync import sync_to_xero
         from src.ingestion.xero import AuthRequiredError as XeroAuthRequired
@@ -292,8 +307,8 @@ def main():
         print(f"  ERROR syncing to Xero: {e}")
         traceback.print_exc()
 
-    # Step 10: Healthcheck pings (only on source-level success)
-    print("\nStep 10: Healthcheck pings...")
+    # Step 11: Healthcheck pings (only on source-level success)
+    print("\nStep 11: Healthcheck pings...")
     if wise_ok:
         ping_healthcheck(hc_wise, "Wise")
     else:

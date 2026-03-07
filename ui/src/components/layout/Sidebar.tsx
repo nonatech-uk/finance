@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { to: '/assets', label: 'Other Assets', icon: '◆' },
   { to: '/categories', label: 'Categories', icon: '⊞' },
   { to: '/merchants', label: 'Merchants', icon: '⊡' },
+  { to: '/tags', label: 'Tags', icon: '⊷' },
   { to: '/tag-rules', label: 'Tag Rules', icon: '⊟' },
 ]
 

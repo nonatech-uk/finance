@@ -43,6 +43,8 @@ export default function Transactions() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [amountMin, setAmountMin] = useState('')
   const [amountMax, setAmountMax] = useState('')
+  const [tagFilter, setTagFilter] = useState('')
+  const [debouncedTagFilter, setDebouncedTagFilter] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [selectMode, setSelectMode] = useState(false)
   const [uncategorised, setUncategorised] = useState(false)
@@ -52,11 +54,15 @@ export default function Transactions() {
   const { scope } = useScope()
   const { data: overview } = useOverview(scope)
 
-  // Debounce search
+  // Debounce search + tag filter
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300)
     return () => clearTimeout(t)
   }, [search])
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedTagFilter(tagFilter), 300)
+    return () => clearTimeout(t)
+  }, [tagFilter])
 
   const [filterInstitution, filterAccountRef] = useMemo(() => {
     if (!account) return [undefined, undefined]
@@ -83,11 +89,12 @@ export default function Transactions() {
     date_to: dateTo || undefined,
     amount_min: amountMin ? Number(amountMin) : undefined,
     amount_max: amountMax ? Number(amountMax) : undefined,
+    tag_pattern: debouncedTagFilter || undefined,
     uncategorised: uncategorised || undefined,
     sort_by: sortBy,
     sort_dir: sortDir,
     scope,
-  }), [debouncedSearch, filterInstitution, filterAccountRef, currency, dateFrom, dateTo, amountMin, amountMax, uncategorised, sortBy, sortDir, scope])
+  }), [debouncedSearch, filterInstitution, filterAccountRef, currency, dateFrom, dateTo, amountMin, amountMax, debouncedTagFilter, uncategorised, sortBy, sortDir, scope])
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useTransactions(filters)
   const { data: detail, isLoading: detailLoading } = useTransaction(selectedId)
@@ -115,6 +122,7 @@ export default function Transactions() {
     setDateTo('')
     setAmountMin('')
     setAmountMax('')
+    setTagFilter('')
     setUncategorised(false)
   }, [])
 
@@ -221,6 +229,13 @@ export default function Transactions() {
               </button>
             ))}
           </div>
+          <input
+            type="text"
+            placeholder="Tag filter (regex)"
+            value={tagFilter}
+            onChange={e => setTagFilter(e.target.value)}
+            className="bg-bg-card border border-border rounded-md px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent w-36 font-mono"
+          />
           <label className="inline-flex items-center gap-1.5 text-sm text-text-secondary cursor-pointer select-none">
             <input
               type="checkbox"
@@ -258,6 +273,7 @@ export default function Transactions() {
                   <SortableHeader label="Date" sortKey="posted_at" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <SortableHeader label="Merchant" sortKey="merchant" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <SortableHeader label="Category" sortKey="category" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                  <th className="pb-2 pr-4 text-left">Tags</th>
                   <SortableHeader label="Amount" sortKey="amount" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} align="right" />
                   <SortableHeader label="Account" sortKey="source" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                 </tr>
@@ -370,6 +386,15 @@ function TransactionRow({ txn, isSelected, isChecked, selectMode, accountLabel, 
         ) : (
           <span className="text-text-secondary text-xs">—</span>
         )}
+      </td>
+      <td className="py-2 pr-4">
+        {txn.tags.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {txn.tags.map(t => (
+              <span key={t} className="px-1.5 py-0.5 text-xs rounded bg-accent/15 text-accent">{t}</span>
+            ))}
+          </div>
+        ) : null}
       </td>
       <td className="py-2 pr-4 text-right">
         <CurrencyAmount amount={txn.amount} currency={txn.currency} showSign={false} />

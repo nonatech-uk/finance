@@ -498,3 +498,16 @@ export interface TagRuleApplyResult {
   tags_created: number
   tags_removed: number
 }
+
+// ── Tag Management ──
+
+export interface TagSummaryItem {
+  tag: string
+  count: number
+  sources: Record<string, number>
+  rule_ids: number[]
+}
+
+export interface TagSummaryList {
+  items: TagSummaryItem[]
+}

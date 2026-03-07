@@ -24,6 +24,7 @@ from src.api.models import (
     SplitLineItem,
     SplitRequest,
     TagItem,
+    TagRename,
     TagUpdate,
     TransactionDetail,
     TransactionItem,
@@ -50,7 +51,8 @@ def list_transactions(
     amount_max: Decimal | None = None,
     currency: str | None = None,
     search: str | None = Query(None, description="Search merchant name"),
-    tag: str | None = Query(None, description="Filter by tag"),
+    tag: str | None = Query(None, description="Filter by exact tag"),
+    tag_pattern: str | None = Query(None, description="Filter by tag regex (case-insensitive)"),
     uncategorised: bool = Query(False, description="Show only uncategorised transactions"),
     scope: str | None = Query("personal", description="Scope filter (personal/business/all)"),
     conn=Depends(get_conn),
@@ -137,6 +139,11 @@ def list_transactions(
             "EXISTS (SELECT 1 FROM transaction_tag tt WHERE tt.raw_transaction_id = rt.id AND tt.tag = %(tag)s)"
         )
         params["tag"] = tag
+    if tag_pattern:
+        conditions.append(
+            "EXISTS (SELECT 1 FROM transaction_tag tt WHERE tt.raw_transaction_id = rt.id AND tt.tag ~* %(tag_pattern)s)"
+        )
+        params["tag_pattern"] = tag_pattern
     if uncategorised:
         conditions.append(
             "COALESCE(tcat.full_path, cat.full_path) IS NULL"
@@ -428,6 +435,10 @@ def update_category(
             DO UPDATE SET category_path = EXCLUDED.category_path, source = 'user', updated_at = now()
         """, (str(transaction_id), category_path))
 
+    # Re-apply tag rules for this transaction (category may affect rule matching)
+    from src.api.routers.tag_rules import reconcile_tag_rules_for_transactions
+    reconcile_tag_rules_for_transactions(conn, [str(transaction_id)])
+
     conn.commit()
     return {"ok": True}
 
@@ -576,15 +587,92 @@ def unlink_event(
 
 @router.get("/tags")
 def list_tags(conn=Depends(get_conn), user: CurrentUser = Depends(get_current_user)):
-    """List all known tags with usage counts (for autocomplete)."""
+    """List all tags with usage counts and source breakdown."""
     cur = conn.cursor()
     cur.execute("""
-        SELECT tag, COUNT(*) AS usage_count
+        SELECT tag, source, tag_rule_id, COUNT(*) AS cnt
         FROM transaction_tag
-        GROUP BY tag
+        GROUP BY tag, source, tag_rule_id
         ORDER BY tag
     """)
-    return {"items": [{"tag": r[0], "count": r[1]} for r in cur.fetchall()]}
+    rows = cur.fetchall()
+
+    tags: dict[str, dict] = {}
+    for tag, source, rule_id, cnt in rows:
+        if tag not in tags:
+            tags[tag] = {"tag": tag, "count": 0, "sources": {}, "rule_ids": []}
+        entry = tags[tag]
+        entry["count"] += cnt
+        entry["sources"][source] = entry["sources"].get(source, 0) + cnt
+        if rule_id is not None and rule_id not in entry["rule_ids"]:
+            entry["rule_ids"].append(rule_id)
+
+    return {"items": list(tags.values())}
+
+
+@router.put("/tags/{tag_name}")
+def rename_tag(
+    tag_name: str,
+    body: TagRename,
+    conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
+):
+    """Rename a tag across all transactions. Updates tag rules that generate it."""
+    cur = conn.cursor()
+    new_name = body.new_name.strip()
+    if not new_name:
+        raise HTTPException(400, "New tag name cannot be empty")
+    if new_name == tag_name:
+        raise HTTPException(400, "New name is the same as the old name")
+
+    # Check the tag exists
+    cur.execute("SELECT COUNT(*) FROM transaction_tag WHERE tag = %s", (tag_name,))
+    if cur.fetchone()[0] == 0:
+        raise HTTPException(404, "Tag not found")
+
+    # Update transaction_tag rows (handle conflict if new name already exists on same txn)
+    cur.execute("""
+        DELETE FROM transaction_tag tt1
+        USING transaction_tag tt2
+        WHERE tt1.tag = %s
+        AND tt2.tag = %s
+        AND tt1.raw_transaction_id = tt2.raw_transaction_id
+    """, (tag_name, new_name))
+
+    cur.execute("""
+        UPDATE transaction_tag SET tag = %s WHERE tag = %s
+    """, (new_name, tag_name))
+    affected = cur.rowcount
+
+    # Update any tag rules that reference this tag
+    cur.execute("""
+        UPDATE tag_rule
+        SET tags = array_replace(tags, %s, %s),
+            updated_at = now()
+        WHERE %s = ANY(tags)
+    """, (tag_name, new_name, tag_name))
+    rules_updated = cur.rowcount
+
+    conn.commit()
+    return {"ok": True, "affected": affected, "rules_updated": rules_updated}
+
+
+@router.delete("/tags/{tag_name}")
+def delete_tag(
+    tag_name: str,
+    conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
+):
+    """Delete a tag from all transactions."""
+    cur = conn.cursor()
+    cur.execute("DELETE FROM transaction_tag WHERE tag = %s", (tag_name,))
+    affected = cur.rowcount
+
+    if affected == 0:
+        raise HTTPException(404, "Tag not found")
+
+    conn.commit()
+    return {"ok": True, "affected": affected}
 
 
 @router.post("/transactions/{transaction_id}/tags")
@@ -831,6 +919,10 @@ def bulk_update_category(body: BulkCategoryUpdate, conn=Depends(get_conn), user:
                           source = 'user', updated_at = now()
         """, (ids, category_path))
         affected = cur.rowcount
+
+    # Re-apply tag rules for affected transactions
+    from src.api.routers.tag_rules import reconcile_tag_rules_for_transactions
+    reconcile_tag_rules_for_transactions(conn, ids)
 
     conn.commit()
     return {"ok": True, "affected": affected}

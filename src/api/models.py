@@ -728,3 +728,18 @@ class TagRuleApplyResult(BaseModel):
     rules_applied: int
     tags_created: int
     tags_removed: int
+
+
+class TagSummaryItem(BaseModel):
+    tag: str
+    count: int
+    sources: dict[str, int]
+    rule_ids: list[int]
+
+
+class TagSummaryList(BaseModel):
+    items: list[TagSummaryItem]
+
+
+class TagRename(BaseModel):
+    new_name: str
