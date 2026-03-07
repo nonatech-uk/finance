@@ -1,14 +1,16 @@
-"""Receipt management API — upload, OCR, match, serve files."""
+"""Receipt management API — upload, OCR, match, serve files, email webhook."""
 
+import base64
+import hmac
+import json
 import logging
-import os
-import shutil
+import re
 from datetime import date
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from config.settings import settings
 from src.api.deps import CurrentUser, get_conn, require_admin
@@ -76,6 +78,98 @@ def _make_thumbnail(src_path: Path, thumb_path: Path, mime_type: str):
         return False
 
 
+# ── Shared receipt processing ────────────────────────────────────────────────
+
+
+def _process_receipt_from_bytes(
+    conn, file_bytes: bytes, filename: str, mime_type: str,
+    source: str = "web", uploaded_by: str | None = None, note: str | None = None,
+) -> UUID:
+    """Save file, run OCR, attempt auto-match. Returns receipt_id.
+
+    Shared by web upload and email webhook endpoints.
+    """
+    cur = conn.cursor()
+    file_size = len(file_bytes)
+    ext = EXT_MAP.get(mime_type, "")
+
+    # Create receipt row
+    cur.execute("""
+        INSERT INTO receipt (
+            original_filename, mime_type, file_size, file_path,
+            source, uploaded_by, notes
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+    """, (filename, mime_type, file_size, "pending", source, uploaded_by, note))
+    receipt_id = cur.fetchone()[0]
+
+    # Save file to disk
+    year_month = date.today().strftime("%Y/%m")
+    rel_path = f"{year_month}/{receipt_id}{ext}"
+    abs_path = _storage_root() / rel_path
+    _ensure_dir(abs_path)
+    abs_path.write_bytes(file_bytes)
+
+    # Generate thumbnail
+    thumb_rel = None
+    thumb_path = _storage_root() / f"{year_month}/{receipt_id}_thumb.jpg"
+    if _make_thumbnail(abs_path, thumb_path, mime_type):
+        thumb_rel = f"{year_month}/{receipt_id}_thumb.jpg"
+
+    cur.execute("""
+        UPDATE receipt SET file_path = %s, thumbnail_path = %s WHERE id = %s
+    """, (rel_path, thumb_rel, str(receipt_id)))
+    conn.commit()
+
+    # Run OCR
+    try:
+        from src.receipts.ocr import extract_receipt_data
+        from src.api.routers.settings import get_anthropic_api_key
+
+        api_key = get_anthropic_api_key(conn)
+        ocr_result = extract_receipt_data(str(abs_path), mime_type, api_key=api_key)
+
+        if "error" in ocr_result:
+            cur.execute("""
+                UPDATE receipt
+                SET ocr_status = 'failed', ocr_data = %s,
+                    match_status = 'pending_match', updated_at = now()
+                WHERE id = %s
+            """, (json.dumps({"error": ocr_result["error"]}), str(receipt_id)))
+        else:
+            cur.execute("""
+                UPDATE receipt
+                SET ocr_status = 'completed', ocr_text = %s, ocr_data = %s,
+                    extracted_date = %s, extracted_amount = %s,
+                    extracted_currency = %s, extracted_merchant = %s,
+                    match_status = 'pending_match', updated_at = now()
+                WHERE id = %s
+            """, (
+                ocr_result.get("raw_text"), json.dumps(ocr_result),
+                ocr_result.get("date"), ocr_result.get("amount"),
+                ocr_result.get("currency"), ocr_result.get("merchant"),
+                str(receipt_id),
+            ))
+        conn.commit()
+    except Exception as e:
+        log.exception("OCR failed for receipt %s", receipt_id)
+        cur.execute("""
+            UPDATE receipt
+            SET ocr_status = 'failed', match_status = 'pending_match', updated_at = now()
+            WHERE id = %s
+        """, (str(receipt_id),))
+        conn.commit()
+
+    # Attempt auto-match
+    try:
+        from src.receipts.matcher import auto_match_receipt
+        auto_match_receipt(conn, receipt_id)
+    except Exception as e:
+        log.exception("Auto-match failed for receipt %s", receipt_id)
+
+    return receipt_id
+
+
 # ── Upload ───────────────────────────────────────────────────────────────────
 
 
@@ -94,122 +188,199 @@ def upload_receipt(
             f"Allowed: {', '.join(sorted(ALLOWED_MIME_TYPES))}",
         )
 
-    # Read file
     file_bytes = file.file.read()
     if not file_bytes:
         raise HTTPException(400, "Empty file")
 
-    file_size = len(file_bytes)
-    mime_type = file.content_type
-    original_filename = file.filename or "receipt"
-    ext = EXT_MAP.get(mime_type, "")
+    receipt_id = _process_receipt_from_bytes(
+        conn, file_bytes, file.filename or "receipt", file.content_type,
+        source="web", uploaded_by=user.email, note=note,
+    )
 
     cur = conn.cursor()
-
-    # Create receipt row first to get the ID
-    cur.execute("""
-        INSERT INTO receipt (
-            original_filename, mime_type, file_size, file_path,
-            source, uploaded_by, notes
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-        RETURNING id, created_at
-    """, (
-        original_filename, mime_type, file_size,
-        "pending",  # placeholder, updated after file save
-        "web", user.email, note,
-    ))
-    row = cur.fetchone()
-    receipt_id = row[0]
-    created_at = row[1]
-
-    # Save file to disk
-    year_month = date.today().strftime("%Y/%m")
-    rel_path = f"{year_month}/{receipt_id}{ext}"
-    abs_path = _storage_root() / rel_path
-    _ensure_dir(abs_path)
-    abs_path.write_bytes(file_bytes)
-
-    # Generate thumbnail
-    thumb_rel = None
-    thumb_path = _storage_root() / f"{year_month}/{receipt_id}_thumb.jpg"
-    if _make_thumbnail(abs_path, thumb_path, mime_type):
-        thumb_rel = f"{year_month}/{receipt_id}_thumb.jpg"
-
-    # Update file path
-    cur.execute("""
-        UPDATE receipt
-        SET file_path = %s, thumbnail_path = %s
-        WHERE id = %s
-    """, (rel_path, thumb_rel, str(receipt_id)))
-
-    conn.commit()
-
-    # Run OCR
-    ocr_result = {}
-    try:
-        from src.receipts.ocr import extract_receipt_data
-        from src.api.routers.settings import get_anthropic_api_key
-        api_key = get_anthropic_api_key(conn)
-        ocr_result = extract_receipt_data(str(abs_path), mime_type, api_key=api_key)
-
-        if "error" in ocr_result:
-            cur.execute("""
-                UPDATE receipt
-                SET ocr_status = 'failed',
-                    ocr_data = %s,
-                    match_status = 'pending_match',
-                    updated_at = now()
-                WHERE id = %s
-            """, (
-                __import__("json").dumps({"error": ocr_result["error"]}),
-                str(receipt_id),
-            ))
-        else:
-            import json
-            cur.execute("""
-                UPDATE receipt
-                SET ocr_status = 'completed',
-                    ocr_text = %s,
-                    ocr_data = %s,
-                    extracted_date = %s,
-                    extracted_amount = %s,
-                    extracted_currency = %s,
-                    extracted_merchant = %s,
-                    match_status = 'pending_match',
-                    updated_at = now()
-                WHERE id = %s
-            """, (
-                ocr_result.get("raw_text"),
-                json.dumps(ocr_result),
-                ocr_result.get("date"),
-                ocr_result.get("amount"),
-                ocr_result.get("currency"),
-                ocr_result.get("merchant"),
-                str(receipt_id),
-            ))
-
-        conn.commit()
-    except Exception as e:
-        log.exception("OCR failed for receipt %s", receipt_id)
-        cur.execute("""
-            UPDATE receipt
-            SET ocr_status = 'failed',
-                match_status = 'pending_match',
-                updated_at = now()
-            WHERE id = %s
-        """, (str(receipt_id),))
-        conn.commit()
-
-    # Attempt auto-match
-    match_result = None
-    try:
-        from src.receipts.matcher import auto_match_receipt
-        match_result = auto_match_receipt(conn, receipt_id)
-    except Exception as e:
-        log.exception("Auto-match failed for receipt %s", receipt_id)
-
-    # Return full detail
     return _load_receipt_detail(cur, receipt_id, conn)
+
+
+# ── Email Webhook ────────────────────────────────────────────────────────────
+
+
+def _extract_sender_email(from_field) -> str | None:
+    """Extract email address from ForwardEmail's 'from' field.
+
+    Handles multiple formats from simpleParser:
+    1. {"value": [{"address": "..."}]}
+    2. {"address": "..."}
+    3. [{"address": "..."}]
+    4. {"text": "Name <email>"}
+    5. Plain string "email@example.com"
+    """
+    if not from_field:
+        return None
+
+    if isinstance(from_field, str):
+        # Plain email or "Name <email>" format
+        m = re.search(r"<([^>]+)>", from_field)
+        return m.group(1).lower() if m else from_field.strip().lower()
+
+    if isinstance(from_field, dict):
+        # Format 1: {"value": [{"address": "..."}]}
+        if "value" in from_field and isinstance(from_field["value"], list):
+            for v in from_field["value"]:
+                if isinstance(v, dict) and "address" in v:
+                    return v["address"].lower()
+
+        # Format 2: {"address": "..."}
+        if "address" in from_field:
+            return from_field["address"].lower()
+
+        # Format 4: {"text": "Name <email>"}
+        if "text" in from_field:
+            m = re.search(r"<([^>]+)>", from_field["text"])
+            return m.group(1).lower() if m else from_field["text"].strip().lower()
+
+    if isinstance(from_field, list):
+        # Format 3: [{"address": "..."}]
+        for item in from_field:
+            if isinstance(item, dict) and "address" in item:
+                return item["address"].lower()
+
+    return None
+
+
+def _decode_attachment_content(content) -> bytes | None:
+    """Decode ForwardEmail attachment content.
+
+    Handles three formats:
+    1. Buffer object: {"type": "Buffer", "data": [byte, byte, ...]}
+    2. Base64 string
+    3. Plain string (for text files)
+    """
+    if not content:
+        return None
+
+    # Format 1: Buffer object
+    if isinstance(content, dict) and content.get("type") == "Buffer":
+        data = content.get("data", [])
+        return bytes(data)
+
+    if isinstance(content, str):
+        # Format 2: Base64
+        try:
+            decoded = base64.b64decode(content, validate=True)
+            if decoded:
+                return decoded
+        except Exception:
+            pass
+
+        # Format 3: Plain text
+        return content.encode("utf-8")
+
+    return None
+
+
+@router.post("/receipts/webhook")
+async def receive_email_webhook(
+    request: Request,
+    token: str = Query(""),
+    conn=Depends(get_conn),
+):
+    """Receive receipt emails from ForwardEmail webhook.
+
+    Auth via ?token=SECRET query param (not Authelia).
+    Always returns 200 to prevent ForwardEmail retries.
+    """
+    # Load webhook settings
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT key, value FROM app_setting
+        WHERE key IN ('webhook.receipt_enabled', 'webhook.receipt_secret', 'webhook.receipt_allowed_senders')
+    """)
+    wh_settings = dict(cur.fetchall())
+
+    secret = wh_settings.get("webhook.receipt_secret", "")
+    if not secret or not hmac.compare_digest(token, secret):
+        return JSONResponse({"error": "unauthorized"}, status_code=403)
+
+    if wh_settings.get("webhook.receipt_enabled", "false").lower() != "true":
+        return JSONResponse({"ok": False, "reason": "webhook disabled"})
+
+    # Parse body
+    try:
+        body = await request.json()
+    except Exception:
+        log.warning("Email webhook: invalid JSON body")
+        return JSONResponse({"ok": False, "reason": "invalid JSON"})
+
+    # Extract sender
+    sender = _extract_sender_email(body.get("from"))
+    log.info("Email webhook from %s, subject: %s", sender, body.get("subject", ""))
+
+    # Check allowed senders
+    allowed_raw = wh_settings.get("webhook.receipt_allowed_senders", "").strip()
+    if allowed_raw:
+        allowed = {e.strip().lower() for e in allowed_raw.splitlines() if e.strip()}
+        if sender and sender not in allowed:
+            log.info("Email webhook: sender %s not in allowed list", sender)
+            return JSONResponse({"ok": False, "reason": "sender not allowed"})
+
+    subject = body.get("subject", "")
+    receipts_created = 0
+
+    # Process attachments
+    attachments = body.get("attachments", [])
+    for att in attachments:
+        filename = att.get("filename") or att.get("name") or "attachment"
+        content_type = att.get("contentType") or att.get("type") or ""
+
+        # Normalise content type (remove parameters like charset)
+        content_type = content_type.split(";")[0].strip().lower()
+
+        if content_type not in ALLOWED_MIME_TYPES:
+            log.info("Email webhook: skipping attachment %s (%s)", filename, content_type)
+            continue
+
+        file_bytes = _decode_attachment_content(att.get("content"))
+        if not file_bytes:
+            log.warning("Email webhook: could not decode attachment %s", filename)
+            continue
+
+        try:
+            _process_receipt_from_bytes(
+                conn, file_bytes, filename, content_type,
+                source="email", uploaded_by=sender,
+                note=f"Email: {subject}" if subject else None,
+            )
+            receipts_created += 1
+        except Exception as e:
+            log.exception("Email webhook: failed to process attachment %s", filename)
+
+    # If no attachments, try email body as text receipt
+    if not attachments or receipts_created == 0:
+        text_body = body.get("text", "")
+        html_body = body.get("html", "")
+        email_text = text_body or ""
+
+        # Strip HTML tags as fallback
+        if not email_text and html_body:
+            email_text = re.sub(r"<[^>]+>", "", html_body).strip()
+
+        if email_text and len(email_text) > 20:
+            # Prepend subject for context
+            full_text = f"Subject: {subject}\n\n{email_text}" if subject else email_text
+
+            try:
+                _process_receipt_from_bytes(
+                    conn, full_text.encode("utf-8"),
+                    f"email-{date.today().isoformat()}.txt", "text/plain",
+                    source="email", uploaded_by=sender,
+                    note=f"Email: {subject}" if subject else None,
+                )
+                receipts_created += 1
+            except Exception as e:
+                log.exception("Email webhook: failed to process email body as text")
+
+    log.info("Email webhook: created %d receipt(s) from %s", receipts_created, sender)
+    return JSONResponse({"ok": True, "receipts_created": receipts_created})
 
 
 # ── List / Queue ─────────────────────────────────────────────────────────────

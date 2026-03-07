@@ -13,6 +13,8 @@ SETTING_KEYS = {
     "receipt.alert_days", "receipt.match_date_tolerance",
     "receipt.auto_match_enabled", "receipt.amount_tolerance_pct",
     "anthropic.api_key",
+    "webhook.receipt_enabled", "webhook.receipt_secret",
+    "webhook.receipt_allowed_senders",
 }
 
 
@@ -34,6 +36,10 @@ def _to_response(raw: dict[str, str]) -> SettingsResponse:
         receipt_auto_match_enabled=raw.get("receipt.auto_match_enabled", "true").lower() == "true",
         receipt_amount_tolerance_pct=int(raw.get("receipt.amount_tolerance_pct", "20")),
         anthropic_api_key_set=bool(raw.get("anthropic.api_key", "")),
+        # Email webhook settings
+        webhook_receipt_enabled=raw.get("webhook.receipt_enabled", "false").lower() == "true",
+        webhook_receipt_secret=raw.get("webhook.receipt_secret", ""),
+        webhook_receipt_allowed_senders=raw.get("webhook.receipt_allowed_senders", ""),
     )
 
 
@@ -77,6 +83,19 @@ def update_settings(
     # Anthropic API key — stored in app_setting table
     if body.anthropic_api_key is not None:
         updates["anthropic.api_key"] = body.anthropic_api_key
+
+    # Email webhook settings
+    if body.webhook_receipt_enabled is not None:
+        updates["webhook.receipt_enabled"] = "true" if body.webhook_receipt_enabled else "false"
+    if body.webhook_receipt_secret is not None:
+        secret = body.webhook_receipt_secret.strip()
+        if not secret:
+            # Auto-generate a 32-character token
+            import secrets
+            secret = secrets.token_urlsafe(24)
+        updates["webhook.receipt_secret"] = secret
+    if body.webhook_receipt_allowed_senders is not None:
+        updates["webhook.receipt_allowed_senders"] = body.webhook_receipt_allowed_senders.strip()
 
     # Validate: can't enable CalDAV without a password
     current = _load_settings(conn)

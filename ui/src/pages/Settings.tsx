@@ -20,6 +20,11 @@ export default function Settings() {
   const [anthropicKey, setAnthropicKey] = useState('')
   const [anthropicKeyDirty, setAnthropicKeyDirty] = useState(false)
 
+  // Webhook settings
+  const [webhookEnabled, setWebhookEnabled] = useState(false)
+  const [webhookAllowedSenders, setWebhookAllowedSenders] = useState('')
+  const [copied, setCopied] = useState(false)
+
   // Sync form state when data loads
   useEffect(() => {
     if (data) {
@@ -33,6 +38,8 @@ export default function Settings() {
       setReceiptAmountTolerancePct(data.receipt_amount_tolerance_pct)
       setAnthropicKey('')
       setAnthropicKeyDirty(false)
+      setWebhookEnabled(data.webhook_receipt_enabled)
+      setWebhookAllowedSenders(data.webhook_receipt_allowed_senders)
     }
   }, [data])
 
@@ -75,6 +82,28 @@ export default function Settings() {
       },
     })
   }
+
+  const handleWebhookSave = (e: React.FormEvent) => {
+    e.preventDefault()
+    const body: Record<string, unknown> = {
+      webhook_receipt_enabled: webhookEnabled,
+      webhook_receipt_allowed_senders: webhookAllowedSenders,
+    }
+    // If no secret exists yet, send empty string to trigger auto-generation
+    if (!data?.webhook_receipt_secret) {
+      body.webhook_receipt_secret = ''
+    }
+    updateSettings.mutate(body, {
+      onSuccess: () => {
+        setSaved(true)
+        setTimeout(() => setSaved(false), 2000)
+      },
+    })
+  }
+
+  const webhookUrl = data?.webhook_receipt_secret
+    ? `${window.location.origin}/api/v1/receipts/webhook?token=${data.webhook_receipt_secret}`
+    : ''
 
   const serverUrl = `${window.location.origin}/caldav/`
 
@@ -205,6 +234,97 @@ export default function Settings() {
               <span className="text-sm text-red-400">
                 Error: {updateSettings.error?.message || 'Failed to save'}
               </span>
+            )}
+          </div>
+        </form>
+      </div>
+
+      {/* Email Webhook */}
+      <div className="bg-bg-card border border-border rounded-lg p-5 space-y-5">
+        <div>
+          <h3 className="text-base font-medium text-text-primary">Email Webhook</h3>
+          <p className="text-sm text-text-secondary mt-1">
+            Forward receipt emails to automatically ingest attachments and text receipts.
+          </p>
+        </div>
+
+        <form onSubmit={handleWebhookSave} className="space-y-4">
+          {/* Enable toggle */}
+          <label className="flex items-center gap-3 cursor-pointer">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={webhookEnabled}
+              onClick={() => setWebhookEnabled(!webhookEnabled)}
+              className={`relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors ${
+                webhookEnabled ? 'bg-accent' : 'bg-bg-hover'
+              }`}
+            >
+              <span
+                className={`inline-block h-5 w-5 rounded-full bg-white shadow transform transition-transform mt-0.5 ${
+                  webhookEnabled ? 'translate-x-[22px]' : 'translate-x-0.5'
+                }`}
+              />
+            </button>
+            <span className="text-sm text-text-primary">Accept incoming receipt emails</span>
+          </label>
+
+          {/* Webhook URL */}
+          {webhookUrl ? (
+            <div>
+              <label className="block text-sm text-text-secondary mb-1">Webhook URL</label>
+              <div className="flex gap-2">
+                <code className="flex-1 px-3 py-1.5 text-xs bg-bg-secondary border border-border rounded-md text-text-primary select-all break-all font-mono">
+                  {webhookUrl}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(webhookUrl)
+                    setCopied(true)
+                    setTimeout(() => setCopied(false), 2000)
+                  }}
+                  className="px-3 py-1.5 text-xs font-medium rounded-md bg-bg-secondary border border-border text-text-primary hover:bg-bg-hover transition-colors shrink-0"
+                >
+                  {copied ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+              <p className="text-xs text-text-secondary mt-1">
+                Add this URL as a webhook destination in your ForwardEmail domain settings.
+              </p>
+            </div>
+          ) : (
+            <p className="text-xs text-amber-400">
+              Save to generate a webhook URL with authentication token.
+            </p>
+          )}
+
+          {/* Allowed senders */}
+          <div>
+            <label className="block text-sm text-text-secondary mb-1">Allowed senders (optional)</label>
+            <textarea
+              value={webhookAllowedSenders}
+              onChange={e => setWebhookAllowedSenders(e.target.value)}
+              placeholder="one email per line"
+              rows={3}
+              className="w-full px-3 py-1.5 text-sm bg-bg-secondary border border-border rounded-md text-text-primary placeholder:text-text-secondary/50 focus:outline-none focus:ring-1 focus:ring-accent font-mono"
+            />
+            <p className="text-xs text-text-secondary mt-1">
+              Only accept emails from these addresses. Leave empty to accept from anyone.
+            </p>
+          </div>
+
+          {/* Save */}
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              type="submit"
+              disabled={updateSettings.isPending}
+              className="px-4 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 transition-colors"
+            >
+              {updateSettings.isPending ? 'Saving...' : 'Save'}
+            </button>
+            {saved && (
+              <span className="text-sm text-green-400">Saved ✓</span>
             )}
           </div>
         </form>

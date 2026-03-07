@@ -523,6 +523,9 @@ export interface SettingsResponse {
   receipt_auto_match_enabled: boolean
   receipt_amount_tolerance_pct: number
   anthropic_api_key_set: boolean
+  webhook_receipt_enabled: boolean
+  webhook_receipt_secret: string
+  webhook_receipt_allowed_senders: string
 }
 
 export interface SettingsUpdate {
@@ -534,4 +537,7 @@ export interface SettingsUpdate {
   receipt_auto_match_enabled?: boolean
   receipt_amount_tolerance_pct?: number
   anthropic_api_key?: string
+  webhook_receipt_enabled?: boolean
+  webhook_receipt_secret?: string
+  webhook_receipt_allowed_senders?: string
 }

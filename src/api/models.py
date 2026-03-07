@@ -758,6 +758,10 @@ class SettingsResponse(BaseModel):
     receipt_auto_match_enabled: bool = True
     receipt_amount_tolerance_pct: int = 20
     anthropic_api_key_set: bool = False
+    # Email webhook settings
+    webhook_receipt_enabled: bool = False
+    webhook_receipt_secret: str = ""
+    webhook_receipt_allowed_senders: str = ""
 
 
 class SettingsUpdate(BaseModel):
@@ -769,7 +773,11 @@ class SettingsUpdate(BaseModel):
     receipt_match_date_tolerance: int | None = None
     receipt_auto_match_enabled: bool | None = None
     receipt_amount_tolerance_pct: int | None = None
-    anthropic_api_key: str | None = None  # stored in .env, not DB
+    anthropic_api_key: str | None = None
+    # Email webhook settings
+    webhook_receipt_enabled: bool | None = None
+    webhook_receipt_secret: str | None = None
+    webhook_receipt_allowed_senders: str | None = None
 
 
 # ── Receipts ────────────────────────────────────────────────────────────────
