@@ -189,6 +189,7 @@ async def handle_principal(request: Request) -> Response:
 
         known = {
             (DAV, "resourcetype"): (DAV, "resourcetype", make_resourcetype((DAV, "collection"))),
+            (DAV, "current-user-principal"): (DAV, "current-user-principal", make_href_element("/caldav/principal/")),
             (CALDAV, "calendar-home-set"): (CALDAV, "calendar-home-set", make_href_element("/caldav/calendars/")),
             (DAV, "displayname"): (DAV, "displayname", "Finance User"),
         }
