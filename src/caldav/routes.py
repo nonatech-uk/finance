@@ -52,8 +52,8 @@ async def _log_request(request: Request, label: str) -> bytes:
     depth = request.headers.get("Depth", "-")
     log.info("CalDAV %s %s %s Depth=%s body=%d bytes",
              label, request.method, request.url.path, depth, len(body))
-    if body and log.isEnabledFor(logging.DEBUG):
-        log.debug("CalDAV body:\n%s", body.decode("utf-8", errors="replace")[:2000])
+    if body:
+        log.info("CalDAV body:\n%s", body.decode("utf-8", errors="replace")[:2000])
     return body
 
 
@@ -169,6 +169,7 @@ async def handle_root(request: Request) -> Response:
         known = {
             (DAV, "resourcetype"): (DAV, "resourcetype", make_resourcetype((DAV, "collection"))),
             (DAV, "current-user-principal"): (DAV, "current-user-principal", make_href_element("/caldav/principal/")),
+            (DAV, "principal-URL"): (DAV, "principal-URL", make_href_element("/caldav/principal/")),
             (DAV, "displayname"): (DAV, "displayname", "Finance CalDAV"),
         }
 
@@ -187,7 +188,9 @@ async def handle_root(request: Request) -> Response:
         if not_found:
             resp["not_found"] = not_found
 
-        return _xml_response(multistatus(resp))
+        xml_body = multistatus(resp)
+        log.info("CalDAV ROOT response:\n%s", xml_body.decode("utf-8", errors="replace")[:2000])
+        return _xml_response(xml_body)
     finally:
         _put_conn(conn)
 
@@ -710,6 +713,9 @@ well_known_routes = Router(routes=[
 server_root_routes = Router(routes=[
     Route("/", endpoint=handle_server_root, methods=["PROPFIND", "OPTIONS"]),
 ])
+
+# Apple sends PROPFIND /caldav (no trailing slash) — handle it the same as /caldav/
+caldav_no_slash_route = Route("/caldav", endpoint=handle_root, methods=["PROPFIND", "OPTIONS"])
 
 
 # ── Router ───────────────────────────────────────────────────────────────────

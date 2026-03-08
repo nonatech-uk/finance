@@ -55,6 +55,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def log_caldav_requests(request: Request, call_next):
+    """Log all /caldav requests with method, path, auth presence, and response status."""
+    if request.url.path.startswith("/caldav") or request.url.path.startswith("/.well-known"):
+        has_auth = "Authorization" in request.headers
+        _caldav_log.info(
+            "MIDDLEWARE %s %s auth=%s depth=%s",
+            request.method, request.url.path, has_auth,
+            request.headers.get("Depth", "-"),
+        )
+        response = await call_next(request)
+        _caldav_log.info(
+            "MIDDLEWARE response %s %s → %d",
+            request.method, request.url.path, response.status_code,
+        )
+        return response
+    return await call_next(request)
+
 # Mount routers
 app.include_router(auth.router, prefix="/api/v1", tags=["auth"])
 app.include_router(transactions.router, prefix="/api/v1", tags=["transactions"])
@@ -77,11 +96,12 @@ def health():
 
 
 # CalDAV for Apple Reminders — serves todo-tagged transactions as VTODOs
-from src.caldav.routes import caldav_router, server_root_routes, well_known_routes  # noqa: E402
+from src.caldav.routes import caldav_no_slash_route, caldav_router, server_root_routes, well_known_routes  # noqa: E402
 
 # Well-known and root PROPFIND must be mounted before /caldav and SPA catch-all
 app.mount("/.well-known", well_known_routes)
 app.routes.insert(0, server_root_routes.routes[0])  # PROPFIND on / before other routes
+app.routes.insert(1, caldav_no_slash_route)  # PROPFIND /caldav (no trailing slash)
 app.mount("/caldav", caldav_router)
 
 
