@@ -246,10 +246,23 @@ def main():
     # Step 8: Link ATM cash withdrawals
     print("\nStep 8: Link ATM cash withdrawals...")
     try:
-        from scripts.link_cash_withdrawals import link_cash_withdrawals
+        from scripts.link_cash_withdrawals import (
+            link_cash_withdrawals, suppress_ibank_cash_duplicates,
+            recalculate_balance_resets,
+        )
         result = link_cash_withdrawals()
         print(f"  Inserted: {result['inserted']}, Linked: {result['linked']}, "
               f"Accounts: {result['accounts_created']}")
+
+        # Suppress iBank cash withdrawal entries that duplicate ATM mirrors
+        suppressed = suppress_ibank_cash_duplicates()
+        if suppressed:
+            print(f"  Suppressed {suppressed} duplicate iBank cash entries")
+
+        # Recalculate balance resets to maintain target balances
+        reset_result = recalculate_balance_resets()
+        if reset_result["updated"]:
+            print(f"  Recalculated {reset_result['updated']}/{reset_result['checked']} balance resets")
     except Exception as e:
         print(f"  ERROR linking cash withdrawals: {e}")
         traceback.print_exc()

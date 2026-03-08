@@ -352,6 +352,143 @@ def link_cash_withdrawals(dry_run: bool = False) -> dict:
         conn.close()
 
 
+def suppress_ibank_cash_duplicates(dry_run: bool = False) -> int:
+    """Suppress iBank 'Cash Withdrawal' entries that duplicate an ATM mirror.
+
+    When link_cash_withdrawals creates a synthetic mirror on a cash account,
+    any pre-existing iBank credit for the same withdrawal is a duplicate.
+    Match by (account_ref, amount ±0.01, posted_at ±1 day).
+
+    Returns count of iBank entries suppressed.
+    """
+    conn = psycopg2.connect(settings.dsn)
+    try:
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT ib.id
+            FROM raw_transaction ib
+            JOIN raw_transaction mir
+                ON mir.institution = 'cash'
+                AND mir.account_ref = ib.account_ref
+                AND mir.source = 'synthetic'
+                AND mir.transaction_ref LIKE 'cash_mirror_%%'
+                AND ABS(ib.amount - mir.amount) < 0.01
+                AND ABS(ib.posted_at - mir.posted_at) <= 1
+            WHERE ib.institution = 'cash'
+              AND ib.source = 'ibank'
+              AND ib.raw_merchant = 'Cash Withdrawal'
+              AND ib.amount > 0
+              AND NOT EXISTS (
+                  SELECT 1 FROM dedup_group_member dgm
+                  WHERE dgm.raw_transaction_id = ib.id
+                    AND NOT dgm.is_preferred
+              )
+        """)
+        ids = [row[0] for row in cur.fetchall()]
+
+        if not ids or dry_run:
+            return len(ids)
+
+        # Create single-member dedup groups marking iBank entries as non-preferred
+        cur.execute("""
+            WITH new_groups AS (
+                INSERT INTO dedup_group (canonical_id, match_rule, confidence)
+                SELECT id, 'ibank_cash_superseded', 1.0
+                FROM raw_transaction
+                WHERE id = ANY(%(ids)s::uuid[])
+                RETURNING id AS group_id, canonical_id AS txn_id
+            )
+            INSERT INTO dedup_group_member (dedup_group_id, raw_transaction_id, is_preferred)
+            SELECT group_id, txn_id, false
+            FROM new_groups
+        """, {"ids": [str(i) for i in ids]})
+
+        conn.commit()
+        return len(ids)
+    finally:
+        conn.close()
+
+
+def recalculate_balance_resets(dry_run: bool = False) -> dict:
+    """Recalculate existing balance reset adjustments to maintain target balances.
+
+    After new transactions are added (e.g. ATM mirrors), existing reset amounts
+    may be stale. This reads the target_balance from each reset's raw_data and
+    recalculates the adjustment so the account balance stays at the target.
+
+    Returns dict with counts of resets checked and updated.
+    """
+    conn = psycopg2.connect(settings.dsn)
+    try:
+        cur = conn.cursor()
+
+        # Find all balance reset transactions, newest first per account
+        cur.execute("""
+            SELECT id, account_ref, transaction_ref, amount,
+                   raw_data->>'target_balance' AS target_balance
+            FROM raw_transaction
+            WHERE institution = 'cash'
+              AND transaction_ref LIKE 'cash_reset_%%'
+              AND raw_data->>'target_balance' IS NOT NULL
+            ORDER BY account_ref, posted_at DESC
+        """)
+        resets = cur.fetchall()
+
+        if not resets:
+            return {"checked": 0, "updated": 0}
+
+        # Group by account — only recalculate the NEWEST reset per account
+        # (older resets are already baked into the balance)
+        seen_accounts = set()
+        checked = 0
+        updated = 0
+
+        for reset_id, account_ref, txn_ref, current_amount, target_str in resets:
+            if account_ref in seen_accounts:
+                continue
+            seen_accounts.add(account_ref)
+            checked += 1
+
+            target_balance = Decimal(target_str)
+
+            # Current balance excluding this reset
+            cur.execute("""
+                SELECT COALESCE(SUM(amount), 0)
+                FROM active_transaction
+                WHERE institution = 'cash' AND account_ref = %s
+                  AND transaction_ref IS DISTINCT FROM %s
+            """, (account_ref, txn_ref))
+            current_balance = cur.fetchone()[0]
+
+            new_adjustment = target_balance - current_balance
+
+            if abs(new_adjustment - current_amount) < Decimal("0.01"):
+                continue
+
+            if dry_run:
+                print(f"  [DRY RUN] {account_ref}: {current_amount} -> {new_adjustment} "
+                      f"(target={target_balance}, balance_excl_reset={current_balance})")
+                updated += 1
+                continue
+
+            cur.execute("""
+                UPDATE raw_transaction
+                SET amount = %s
+                WHERE id = %s
+            """, (new_adjustment, reset_id))
+            print(f"  {account_ref}: adjusted {current_amount} -> {new_adjustment} "
+                  f"(target={target_balance})")
+            updated += 1
+
+        if not dry_run and updated > 0:
+            conn.commit()
+
+        return {"checked": checked, "updated": updated}
+    finally:
+        conn.close()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Link ATM cash withdrawals to synthetic cash account transactions"
