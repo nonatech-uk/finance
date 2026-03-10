@@ -34,6 +34,11 @@ SOURCE_SUPERSEDED = [
     },
     {
         "institution": "first_direct",
+        "account_ref": "fd_5682",
+        "superseded_source": "first_direct_pdf",
+    },
+    {
+        "institution": "first_direct",
         "account_ref": "fd_8897",
         "superseded_source": "ibank",
     },
