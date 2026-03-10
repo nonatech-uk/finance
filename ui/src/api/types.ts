@@ -126,6 +126,7 @@ export interface AccountItem {
   scope: string
   is_favourite: boolean
   display_order: number | null
+  is_taxable: boolean
 }
 
 export interface AccountList {
@@ -139,6 +140,12 @@ export interface AccountUpdate {
   scope?: string
   is_favourite?: boolean
   display_order?: number | null
+  account_type?: string
+  is_taxable?: boolean
+}
+
+export interface AccountDeleteResult {
+  deleted_transactions: number
 }
 
 export interface AccountDetailResponse {

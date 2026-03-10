@@ -214,6 +214,7 @@ class AccountItem(BaseModel):
     scope: str = "personal"
     is_favourite: bool = False
     display_order: int | None = None
+    is_taxable: bool = False
     transaction_count: int = 0
     earliest_date: date | None = None
     latest_date: date | None = None
@@ -233,6 +234,8 @@ class AccountUpdate(BaseModel):
     scope: str | None = None
     is_favourite: bool | None = None
     display_order: int | None = None
+    account_type: str | None = None
+    is_taxable: bool | None = None
 
 
 # ── Merchants ─────────────────────────────────────────────────────────────────

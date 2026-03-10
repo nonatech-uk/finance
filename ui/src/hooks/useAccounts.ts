@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { fetchAccounts, fetchAccountDetail, fetchFavouriteAccounts, updateAccount } from '../api/accounts'
+import { fetchAccounts, fetchAccountDetail, fetchFavouriteAccounts, updateAccount, deleteAccount } from '../api/accounts'
 import type { AccountUpdate } from '../api/types'
 
 export function useAccounts(includeArchived = false, scope?: string) {
@@ -36,6 +36,21 @@ export function useUpdateAccount() {
     }) => updateAccount(institution, accountRef, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['accounts'] })
+    },
+  })
+}
+
+export function useDeleteAccount() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ institution, accountRef }: {
+      institution: string
+      accountRef: string
+    }) => deleteAccount(institution, accountRef),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['stats'] })
     },
   })
 }

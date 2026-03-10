@@ -1,5 +1,5 @@
 import { apiFetch } from './client'
-import type { AccountList, AccountDetailResponse, AccountUpdate } from './types'
+import type { AccountList, AccountDetailResponse, AccountUpdate, AccountDeleteResult } from './types'
 
 export function fetchAccounts(includeArchived = false, scope?: string) {
   const params = new URLSearchParams()
@@ -23,5 +23,11 @@ export function updateAccount(institution: string, accountRef: string, body: Acc
   return apiFetch<Record<string, unknown>>(`/accounts/${institution}/${accountRef}`, {
     method: 'PUT',
     body: JSON.stringify(body),
+  })
+}
+
+export function deleteAccount(institution: string, accountRef: string) {
+  return apiFetch<AccountDeleteResult>(`/accounts/${institution}/${accountRef}`, {
+    method: 'DELETE',
   })
 }

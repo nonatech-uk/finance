@@ -1,9 +1,18 @@
 """Account endpoints."""
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.api.deps import CurrentUser, get_conn, get_current_user, require_admin, scope_condition, validate_scope
 from src.api.models import AccountUpdate, TransactionItem
+
+log = logging.getLogger(__name__)
+
+_VALID_ACCOUNT_TYPES = {
+    "current", "savings", "credit_card", "investment",
+    "cash", "pension", "property", "vehicle", "mortgage",
+}
 
 router = APIRouter()
 
@@ -52,7 +61,8 @@ def list_accounts(
             a.is_archived,
             a.exclude_from_reports,
             a.scope,
-            a.display_order
+            a.display_order,
+            a.is_taxable
         FROM active_transaction rt
         LEFT JOIN account a
             ON a.institution = rt.institution
@@ -61,7 +71,7 @@ def list_accounts(
         GROUP BY a.id, rt.institution, rt.account_ref, rt.currency,
                  a.name, a.display_name, a.account_type, a.is_active,
                  a.is_archived, a.exclude_from_reports, a.scope,
-                 a.display_order
+                 a.display_order, a.is_taxable
         ORDER BY a.display_order ASC NULLS LAST, rt.institution, rt.account_ref
     """, params)
 
@@ -149,7 +159,8 @@ def list_favourite_accounts(
             a.is_archived,
             a.exclude_from_reports,
             a.scope,
-            a.display_order
+            a.display_order,
+            a.is_taxable
         FROM active_transaction rt
         JOIN account a
             ON a.institution = rt.institution
@@ -160,7 +171,7 @@ def list_favourite_accounts(
         GROUP BY a.id, rt.institution, rt.account_ref, rt.currency,
                  a.name, a.display_name, a.account_type, a.is_active,
                  a.is_archived, a.exclude_from_reports, a.scope,
-                 a.display_order
+                 a.display_order, a.is_taxable
         ORDER BY a.display_order ASC
     """, scope_params)
 
@@ -210,14 +221,16 @@ def get_account_detail(
             a.is_active,
             a.is_archived,
             a.exclude_from_reports,
-            a.scope
+            a.scope,
+            a.is_taxable
         FROM active_transaction rt
         LEFT JOIN account a
             ON a.institution = rt.institution
             AND a.account_ref = rt.account_ref
         WHERE rt.institution = %s AND rt.account_ref = %s
         GROUP BY rt.currency, a.name, a.display_name, a.account_type,
-                 a.is_active, a.is_archived, a.exclude_from_reports, a.scope
+                 a.is_active, a.is_archived, a.exclude_from_reports, a.scope,
+                 a.is_taxable
     """, (institution, account_ref))
 
     summary_row = cur.fetchone()
@@ -302,6 +315,20 @@ def update_account(
             updates["display_order"] = None
     elif body.display_order is not None:
         updates["display_order"] = body.display_order
+    if body.account_type is not None:
+        if body.account_type not in _VALID_ACCOUNT_TYPES:
+            raise HTTPException(400, f"account_type must be one of: {', '.join(sorted(_VALID_ACCOUNT_TYPES))}")
+        # Check if this is a virtual account (immutable type)
+        cur.execute(
+            "SELECT account_type FROM account WHERE institution = %s AND account_ref = %s",
+            (institution, account_ref),
+        )
+        existing_type = cur.fetchone()
+        if existing_type and existing_type[0] == "virtual":
+            raise HTTPException(400, "Cannot change account type for virtual accounts")
+        updates["account_type"] = body.account_type
+    if body.is_taxable is not None:
+        updates["is_taxable"] = body.is_taxable
 
     if not updates:
         raise HTTPException(400, "No fields to update")
@@ -349,7 +376,7 @@ def update_account(
     cur.execute("""
         SELECT institution, account_ref, name, display_name, currency,
                account_type, is_active, is_archived, exclude_from_reports, scope,
-               display_order
+               display_order, is_taxable
         FROM account
         WHERE institution = %s AND account_ref = %s
     """, (institution, account_ref))
@@ -358,3 +385,101 @@ def update_account(
     result = dict(zip(cols, row))
     result["is_favourite"] = result.get("display_order") is not None
     return result
+
+
+@router.delete("/accounts/{institution}/{account_ref}")
+def delete_account(
+    institution: str,
+    account_ref: str,
+    conn=Depends(get_conn),
+    user: CurrentUser = Depends(require_admin),
+):
+    """Delete an account and all its transactions + related data.
+
+    Cascade deletes in FK-safe order, then removes the account row.
+    """
+    cur = conn.cursor()
+
+    # Collect all raw_transaction IDs for this account
+    cur.execute(
+        "SELECT id FROM raw_transaction WHERE institution = %s AND account_ref = %s",
+        (institution, account_ref),
+    )
+    txn_ids = [str(r[0]) for r in cur.fetchall()]
+
+    if not txn_ids:
+        # No transactions — just delete account metadata if present
+        cur.execute(
+            "DELETE FROM account_alias WHERE institution = %s AND account_ref = %s",
+            (institution, account_ref),
+        )
+        cur.execute(
+            "DELETE FROM account WHERE institution = %s AND account_ref = %s",
+            (institution, account_ref),
+        )
+        conn.commit()
+        return {"deleted_transactions": 0}
+
+    # Delete from child tables in FK-safe order
+    child_tables = [
+        "amazon_order_match",
+        "transaction_category_override",
+        "transaction_merchant_override",
+        "transaction_note",
+        "transaction_split_line",
+        "transaction_tag",
+        "dedup_group_member",
+        "economic_event_leg",
+        "cleaned_transaction",
+    ]
+    for table in child_tables:
+        cur.execute(
+            f"DELETE FROM {table} WHERE raw_transaction_id = ANY(%s::uuid[])",
+            (txn_ids,),
+        )
+
+    # Delete orphaned dedup_group rows (canonical_id pointed to our txns,
+    # or groups with no remaining members)
+    cur.execute(
+        "DELETE FROM dedup_group WHERE canonical_id = ANY(%s::uuid[])",
+        (txn_ids,),
+    )
+    cur.execute("""
+        DELETE FROM dedup_group dg
+        WHERE NOT EXISTS (
+            SELECT 1 FROM dedup_group_member dgm WHERE dgm.dedup_group_id = dg.id
+        )
+    """)
+
+    # Unlink receipts matched to these transactions (don't delete the receipts)
+    cur.execute("""
+        UPDATE receipt
+        SET matched_transaction_id = NULL,
+            match_status = 'pending_match',
+            match_confidence = NULL,
+            matched_at = NULL,
+            matched_by = NULL,
+            updated_at = now()
+        WHERE matched_transaction_id = ANY(%s::uuid[])
+    """, (txn_ids,))
+
+    # Delete raw_transaction rows
+    cur.execute(
+        "DELETE FROM raw_transaction WHERE id = ANY(%s::uuid[])",
+        (txn_ids,),
+    )
+
+    # Delete account aliases and account row
+    cur.execute(
+        "DELETE FROM account_alias WHERE institution = %s AND account_ref = %s",
+        (institution, account_ref),
+    )
+    cur.execute(
+        "DELETE FROM account WHERE institution = %s AND account_ref = %s",
+        (institution, account_ref),
+    )
+
+    conn.commit()
+    log.info("Deleted account %s/%s with %d transactions", institution, account_ref, len(txn_ids))
+
+    return {"deleted_transactions": len(txn_ids)}

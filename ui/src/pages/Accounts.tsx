@@ -1,12 +1,24 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useAccounts, useUpdateAccount } from '../hooks/useAccounts'
+import { useAccounts, useUpdateAccount, useDeleteAccount } from '../hooks/useAccounts'
 import { useCsvPreview, useCsvConfirm } from '../hooks/useImports'
 import { useScope } from '../contexts/ScopeContext'
 import CurrencyAmount from '../components/common/CurrencyAmount'
 import Badge from '../components/common/Badge'
 import LoadingSpinner from '../components/common/LoadingSpinner'
 import type { AccountItem, CsvPreviewResult } from '../api/types'
+
+const ACCOUNT_TYPE_OPTIONS = [
+  { value: 'current', label: 'Current Account' },
+  { value: 'savings', label: 'Savings Account' },
+  { value: 'credit_card', label: 'Credit Card' },
+  { value: 'investment', label: 'Investment' },
+  { value: 'cash', label: 'Cash' },
+  { value: 'pension', label: 'Pension' },
+  { value: 'property', label: 'Property' },
+  { value: 'vehicle', label: 'Vehicle' },
+  { value: 'mortgage', label: 'Mortgage' },
+]
 
 function AccountEditModal({
   account,
@@ -16,11 +28,17 @@ function AccountEditModal({
   onClose: () => void
 }) {
   const updateAccount = useUpdateAccount()
+  const deleteAccountMutation = useDeleteAccount()
   const [displayName, setDisplayName] = useState(account.display_name || '')
   const [isArchived, setIsArchived] = useState(account.is_archived)
   const [excludeFromReports, setExcludeFromReports] = useState(account.exclude_from_reports)
   const [isFavourite, setIsFavourite] = useState(account.is_favourite)
   const [displayOrder, setDisplayOrder] = useState(account.display_order ?? 100)
+  const [accountType, setAccountType] = useState(account.account_type || 'current')
+  const [isTaxable, setIsTaxable] = useState(account.is_taxable)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+
+  const isVirtual = account.account_type === 'virtual'
 
   const handleSave = () => {
     updateAccount.mutate(
@@ -33,7 +51,19 @@ function AccountEditModal({
           exclude_from_reports: excludeFromReports,
           is_favourite: isFavourite,
           display_order: isFavourite ? displayOrder : null,
+          ...(!isVirtual && { account_type: accountType }),
+          is_taxable: isTaxable,
         },
+      },
+      { onSuccess: onClose },
+    )
+  }
+
+  const handleDelete = () => {
+    deleteAccountMutation.mutate(
+      {
+        institution: account.institution,
+        accountRef: account.account_ref,
       },
       { onSuccess: onClose },
     )
@@ -62,6 +92,34 @@ function AccountEditModal({
             className="w-full bg-bg-hover border border-border rounded px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent"
           />
         </div>
+
+        <div>
+          <label className="block text-sm text-text-secondary mb-1">Account Type</label>
+          {isVirtual ? (
+            <div className="text-sm text-text-secondary italic">Virtual account (cannot be changed)</div>
+          ) : (
+            <select
+              value={accountType}
+              onChange={e => setAccountType(e.target.value)}
+              className="w-full bg-bg-hover border border-border rounded px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent"
+            >
+              {ACCOUNT_TYPE_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            checked={isTaxable}
+            onChange={e => setIsTaxable(e.target.checked)}
+            className="accent-accent"
+          />
+          <span>Taxable</span>
+          <span className="text-text-secondary text-xs">(for tax reporting)</span>
+        </label>
 
         <label className="flex items-center gap-2 text-sm cursor-pointer">
           <input
@@ -110,20 +168,56 @@ function AccountEditModal({
           </div>
         )}
 
-        <div className="flex justify-end gap-2 pt-2">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm rounded border border-border hover:bg-bg-hover transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={updateAccount.isPending}
-            className="px-4 py-2 text-sm rounded bg-accent text-white hover:bg-accent/80 transition-colors disabled:opacity-50"
-          >
-            {updateAccount.isPending ? 'Saving...' : 'Save'}
-          </button>
+        <div className="flex justify-between items-center pt-2">
+          {!showDeleteConfirm ? (
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="text-sm text-expense hover:text-expense/80 transition-colors"
+            >
+              Delete account
+            </button>
+          ) : (
+            <div className="text-sm space-y-2">
+              <p className="text-expense font-medium">
+                Delete {account.display_name || account.name || account.account_ref}?
+              </p>
+              <p className="text-text-secondary text-xs">
+                This will permanently delete all {account.transaction_count.toLocaleString()} transactions and related data.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="px-3 py-1 text-xs rounded border border-border hover:bg-bg-hover transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleteAccountMutation.isPending}
+                  className="px-3 py-1 text-xs rounded bg-expense text-white hover:bg-expense/80 transition-colors disabled:opacity-50"
+                >
+                  {deleteAccountMutation.isPending ? 'Deleting...' : 'Delete permanently'}
+                </button>
+              </div>
+            </div>
+          )}
+          {!showDeleteConfirm && (
+            <div className="flex gap-2">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 text-sm rounded border border-border hover:bg-bg-hover transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={updateAccount.isPending}
+                className="px-4 py-2 text-sm rounded bg-accent text-white hover:bg-accent/80 transition-colors disabled:opacity-50"
+              >
+                {updateAccount.isPending ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -523,6 +617,7 @@ export default function Accounts() {
                     )}
                     <div className="flex gap-1 flex-wrap">
                       {acct.account_type && <Badge variant="default">{acct.account_type}</Badge>}
+                      {acct.is_taxable && <Badge variant="accent">taxable</Badge>}
                       {acct.is_archived && <Badge variant="warning">archived</Badge>}
                       {acct.exclude_from_reports && <Badge variant="accent">excl. reports</Badge>}
                     </div>
