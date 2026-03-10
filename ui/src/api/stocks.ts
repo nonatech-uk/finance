@@ -58,8 +58,9 @@ export function createTrade(
     trade_type: string
     trade_date: string
     quantity: string
-    price_per_share: string
+    price_per_share?: string
     fees?: string
+    gbp_total_cost?: string
     notes?: string
   },
 ) {

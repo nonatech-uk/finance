@@ -27,8 +27,6 @@ export default function Portfolio() {
   if (isLoading) return <LoadingSpinner />
   if (error) return <div className="text-expense">Error loading portfolio</div>
 
-  const pnl = parseFloat(data?.unrealised_pnl || '0')
-  const pnlPct = data?.unrealised_pnl_pct || '0'
   const gbpPnl = parseFloat(data?.gbp_pnl || '0')
 
   return (

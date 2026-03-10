@@ -55,7 +55,6 @@ export default function HoldingDetail() {
   if (isLoading) return <LoadingSpinner />
   if (error || !data) return <div className="text-expense">Holding not found</div>
 
-  const pnl = parseFloat(data.unrealised_pnl || '0')
   const gbpPnl = parseFloat(data.gbp_pnl || '0')
   const shares = parseFloat(data.current_shares || '0')
   const isForeign = data.currency !== 'GBP'
