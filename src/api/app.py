@@ -28,6 +28,7 @@ from config.settings import settings
 from src.api.deps import close_pool, init_pool
 from src.api.routers import accounts, assets, auth, cash, categories, imports, merchants, receipts, splitwise, stats, stocks, tag_rules, transactions
 from src.api.routers import settings as settings_router
+from src.api.usage_tracker import init_usage_tracker, shutdown_usage_tracker, track_usage_middleware, usage_pageview_router
 
 STATIC_DIR = Path(_project_root) / "static"
 
@@ -36,7 +37,9 @@ STATIC_DIR = Path(_project_root) / "static"
 async def lifespan(app: FastAPI):
     """Manage connection pool lifecycle."""
     init_pool()
+    init_usage_tracker("finance", settings.usage_dsn)
     yield
+    shutdown_usage_tracker()
     close_pool()
 
 
@@ -54,6 +57,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+app.middleware("http")(track_usage_middleware)
 
 
 @app.middleware("http")
@@ -89,6 +95,7 @@ app.include_router(settings_router.router, prefix="/api/v1", tags=["settings"])
 app.include_router(cash.router, prefix="/api/v1", tags=["cash"])
 app.include_router(receipts.router, prefix="/api/v1", tags=["receipts"])
 app.include_router(splitwise.router, prefix="/api/v1", tags=["splitwise"])
+app.include_router(usage_pageview_router, prefix="/api/v1")
 
 
 @app.get("/health")

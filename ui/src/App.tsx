@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Shell from './components/layout/Shell'
 import { ScopeProvider } from './contexts/ScopeContext'
+import { usePageTracking } from './hooks/usePageTracking'
 import Dashboard from './pages/Dashboard'
 import Transactions from './pages/Transactions'
 import Accounts from './pages/Accounts'
@@ -21,6 +22,7 @@ import Splitwise from './pages/Splitwise'
 export default function App() {
   return (
     <BrowserRouter>
+      <PageTracker />
       <ScopeProvider>
         <Shell>
           <Routes>
@@ -47,4 +49,9 @@ export default function App() {
       </ScopeProvider>
     </BrowserRouter>
   )
+}
+
+function PageTracker() {
+  usePageTracking()
+  return null
 }

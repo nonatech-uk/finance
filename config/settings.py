@@ -54,6 +54,9 @@ class Settings(BaseSettings):
         "http://localhost:5173",
     ]
 
+    # Usage tracking
+    usage_dsn: str = ""
+
     # API server
     api_host: str = "0.0.0.0"
     api_port: int = 8000
