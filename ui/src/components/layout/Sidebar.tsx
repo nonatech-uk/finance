@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { to: '/tag-rules', label: 'Tag Rules', icon: '⊟' },
   { to: '/receipts', label: 'Receipts', icon: '⊘' },
   { to: '/splitwise', label: 'Splitwise', icon: '⇅' },
+  { to: '/paypal', label: 'PayPal', icon: '⊜' },
 ]
 
 const SCOPE_OPTIONS = [
