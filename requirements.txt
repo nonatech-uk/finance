@@ -1,9 +1,7 @@
-psycopg2-binary
-pydantic-settings
+mees-shared @ file:///tmp/mees-shared-py
 requests
 python-dotenv
 rapidfuzz
-fastapi
 python-multipart
 uvicorn[standard]
 anthropic

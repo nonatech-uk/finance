@@ -1,21 +1,26 @@
 from pathlib import Path
 
-from pydantic_settings import BaseSettings
+from mees_shared.settings import BaseAppSettings
 
 
-class Settings(BaseSettings):
+class Settings(BaseAppSettings):
+    db_host: str = "192.168.128.9"
+    db_name: str = "finance"
+    db_user: str = "finance"
+    db_sslmode: str = "require"
+
+    cors_origins: list[str] = [
+        "https://finance.mees.st",
+        "http://localhost:5173",
+    ]
+
     # Monzo
     monzo_client_id: str = ""
     monzo_client_secret: str = ""
     monzo_redirect_uri: str = "http://localhost:9876/oauth/callback"
-
-    # Postgres
-    db_host: str = "192.168.128.9"
-    db_port: int = 5432
-    db_name: str = "finance"
-    db_user: str = "finance"
-    db_password: str = ""
-    db_sslmode: str = "require"
+    monzo_auth_url: str = "https://auth.monzo.com/"
+    monzo_token_url: str = "https://api.monzo.com/oauth2/token"
+    monzo_api_base: str = "https://api.monzo.com"
 
     # Cross-DB (stuff — for Amazon order lookups)
     stuff_db_name: str = "stuff"
@@ -25,11 +30,6 @@ class Settings(BaseSettings):
     # Wise
     wise_api_token: str = ""
     wise_api_base: str = "https://api.wise.com"
-
-    # Monzo API constants
-    monzo_auth_url: str = "https://auth.monzo.com/"
-    monzo_token_url: str = "https://api.monzo.com/oauth2/token"
-    monzo_api_base: str = "https://api.monzo.com"
 
     # Splitwise
     splitwise_api_key: str = ""
@@ -59,40 +59,10 @@ class Settings(BaseSettings):
     # Receipts
     receipt_storage_path: str = "./receipts"
 
-    # Auth
-    auth_enabled: bool = True
-    dev_user_email: str = "stu@mees.st"
-    cors_origins: list[str] = [
-        "https://finance.mees.st",
-        "http://localhost:5173",
-    ]
-
-    # Usage tracking
-    usage_dsn: str = ""
-
-    # API server
-    api_host: str = "0.0.0.0"
-    api_port: int = 8000
-    db_pool_min: int = 2
-    db_pool_max: int = 10
-
     model_config = {
         "env_file": str(Path(__file__).resolve().parent / ".env"),
         "env_file_encoding": "utf-8",
     }
-
-    @property
-    def dsn(self) -> str:
-        return (
-            f"host={self.db_host} port={self.db_port} dbname={self.db_name} "
-            f"user={self.db_user} password={self.db_password} sslmode={self.db_sslmode}"
-        )
-
-    def cross_dsn(self, db_name: str, db_user: str, db_password: str) -> str:
-        return (
-            f"host={self.db_host} port={self.db_port} dbname={db_name} "
-            f"user={db_user} password={db_password} sslmode={self.db_sslmode}"
-        )
 
     @property
     def stuff_dsn(self) -> str:

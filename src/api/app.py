@@ -1,5 +1,6 @@
 """Finance API — FastAPI application."""
 
+import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -21,16 +22,20 @@ if _project_root not in sys.path:
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from config.settings import settings
 from src.api.deps import close_pool, init_pool
 from src.api.routers import accounts, assets, auth, cash, categories, imports, merchants, paypal, receipts, splitwise, stats, stocks, tag_rules, transactions
 from src.api.routers import settings as settings_router
-from src.api.usage_tracker import init_usage_tracker, shutdown_usage_tracker, track_usage_middleware, usage_pageview_router
+
+from mees_shared.usage_tracker import init_usage_tracker, shutdown_usage_tracker, track_usage_middleware, usage_pageview_router
+from mees_shared.dashboard import register_with_dashboard
 
 STATIC_DIR = Path(_project_root) / "static"
+
+_log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -38,7 +43,16 @@ async def lifespan(app: FastAPI):
     """Manage connection pool lifecycle."""
     init_pool()
     init_usage_tracker("finance", settings.usage_dsn)
+    task = asyncio.create_task(register_with_dashboard(
+        label="Finance",
+        href="https://finance.mees.st",
+        icon="\u00A3",
+        sort_order=2,
+        registry_key=settings.dash_registry_key,
+        dashboard_url="http://127.0.0.1:8400/api/v1/apps/register",
+    ))
     yield
+    task.cancel()
     shutdown_usage_tracker()
     close_pool()
 

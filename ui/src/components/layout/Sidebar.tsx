@@ -1,6 +1,6 @@
 import { Link, NavLink } from 'react-router-dom'
 import { useScope } from '../../contexts/ScopeContext'
-import AppSwitcher from './AppSwitcher'
+import { AppSwitcher } from '@mees/shared-ui'
 
 const NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', icon: '◫' },

@@ -1,53 +1,25 @@
 """Connection pool, auth dependencies, and scope helpers."""
 
-from collections.abc import Generator
 from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request
-from psycopg2.pool import ThreadedConnectionPool
+
+from mees_shared.db import get_conn, init_pool as _init_pool, close_pool  # noqa: F401
+from mees_shared.auth import CurrentUser as BaseUser
 
 from config.settings import settings
 
-pool: ThreadedConnectionPool | None = None
-
 
 def init_pool() -> None:
-    """Create the connection pool. Called once at app startup."""
-    global pool
-    pool = ThreadedConnectionPool(
-        settings.db_pool_min,
-        settings.db_pool_max,
-        settings.dsn,
-    )
-
-
-def close_pool() -> None:
-    """Close all connections. Called at app shutdown."""
-    global pool
-    if pool:
-        pool.closeall()
-        pool = None
-
-
-def get_conn() -> Generator:
-    """FastAPI dependency — yields a psycopg2 connection, returns it to pool after."""
-    assert pool is not None, "Connection pool not initialised"
-    conn = pool.getconn()
-    try:
-        yield conn
-    finally:
-        pool.putconn(conn)
+    _init_pool(settings.dsn, settings.db_pool_min, settings.db_pool_max)
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 
 @dataclass
-class CurrentUser:
-    email: str
-    display_name: str
-    allowed_scopes: list[str]
-    role: str  # 'admin' | 'readonly'
+class CurrentUser(BaseUser):
+    allowed_scopes: list[str] = None  # type: ignore[assignment]
 
 
 def get_current_user(request: Request, conn=Depends(get_conn)) -> CurrentUser:
