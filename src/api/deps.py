@@ -1,11 +1,9 @@
 """Connection pool, auth dependencies, and scope helpers."""
 
-from dataclasses import dataclass
-
-from fastapi import Depends, HTTPException, Request
+from fastapi import HTTPException
 
 from mees_shared.db import get_conn, init_pool as _init_pool, close_pool  # noqa: F401
-from mees_shared.auth import CurrentUser as BaseUser
+from mees_shared.auth import CurrentUser, get_current_user as _make_get_user, make_require_admin  # noqa: F401
 
 from config.settings import settings
 
@@ -16,44 +14,8 @@ def init_pool() -> None:
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
-
-@dataclass
-class CurrentUser(BaseUser):
-    allowed_scopes: list[str] = None  # type: ignore[assignment]
-
-
-def get_current_user(request: Request, conn=Depends(get_conn)) -> CurrentUser:
-    """Extract authenticated user from Authelia headers or dev fallback."""
-    if not settings.auth_enabled:
-        email = settings.dev_user_email
-    else:
-        email = request.headers.get("Remote-Email")
-        if not email:
-            raise HTTPException(401, "Not authenticated")
-
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT email, display_name, allowed_scopes, role FROM app_user WHERE email = %s",
-        (email,),
-    )
-    row = cur.fetchone()
-    if not row:
-        raise HTTPException(403, f"User {email} is not authorised for this application")
-
-    display_name_header = request.headers.get("Remote-Name")
-    return CurrentUser(
-        email=row[0],
-        display_name=display_name_header or row[1],
-        allowed_scopes=row[2],
-        role=row[3],
-    )
-
-
-def require_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-    """Dependency that ensures the user has admin role."""
-    if user.role != "admin":
-        raise HTTPException(403, "Admin access required")
-    return user
+get_current_user = _make_get_user(settings.auth_enabled, settings.dev_user_email, has_scopes=True)
+require_admin = make_require_admin(get_current_user)
 
 
 # ── Scope helpers ─────────────────────────────────────────────────────────────
