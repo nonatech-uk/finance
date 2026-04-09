@@ -255,7 +255,7 @@ export default function TaxSummary() {
 
       {/* Disposals Table */}
       {cgt && cgt.disposals.length > 0 && (
-        <div className="bg-bg-card border border-border rounded-lg overflow-hidden">
+        <div className="bg-bg-card border border-border rounded-lg overflow-x-auto">
           <div className="px-4 py-3 border-b border-border">
             <h3 className="text-sm font-medium text-text-secondary">Disposals</h3>
           </div>

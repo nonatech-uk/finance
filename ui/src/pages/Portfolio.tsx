@@ -106,7 +106,7 @@ export default function Portfolio() {
       )}
 
       {data && (
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <StatCard
             label="GBP Value"
             value={`£${parseFloat(data.total_gbp_value).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`}
@@ -126,7 +126,7 @@ export default function Portfolio() {
       )}
 
       {data && data.holdings.length > 0 && (
-        <div className="bg-bg-card border border-border rounded-lg overflow-hidden">
+        <div className="bg-bg-card border border-border rounded-lg overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-bg-secondary">

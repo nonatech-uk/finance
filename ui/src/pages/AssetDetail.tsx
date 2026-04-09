@@ -143,7 +143,7 @@ export default function AssetDetail() {
 
       {showForm && (
         <form onSubmit={handleAdd} className="bg-bg-card border border-border rounded-lg p-4 space-y-3">
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div>
               <label className="block text-xs text-text-secondary mb-1">Date</label>
               <input
@@ -202,14 +202,14 @@ export default function AssetDetail() {
         </form>
       )}
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard label="Gross Value" value={`£${fmt(data.latest_gross_value)}`} />
         <StatCard label="Tax Payable" value={`£${fmt(data.latest_tax_payable)}`} />
         <StatCard label="Net Value" value={`£${fmt(data.latest_net_value)}`} />
       </div>
 
       {/* Valuation History */}
-      <div className="bg-bg-card border border-border rounded-lg overflow-hidden">
+      <div className="bg-bg-card border border-border rounded-lg overflow-x-auto">
         <div className="px-4 py-3 border-b border-border">
           <h3 className="text-sm font-medium text-text-secondary">Valuation History</h3>
         </div>

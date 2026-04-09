@@ -41,7 +41,7 @@ export default function Assets() {
 
       {showForm && (
         <form onSubmit={handleCreate} className="bg-bg-card border border-border rounded-lg p-4 space-y-3">
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-xs text-text-secondary mb-1">Name</label>
               <input
@@ -86,7 +86,7 @@ export default function Assets() {
       )}
 
       {data && (
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <StatCard label="Total Gross Value" value={`£${fmt(data.total_gross_value)}`} />
           <StatCard label="Total Tax Payable" value={`£${fmt(data.total_tax_payable)}`} />
           <StatCard label="Total Net Value" value={`£${fmt(data.total_net_value)}`} />
@@ -94,7 +94,7 @@ export default function Assets() {
       )}
 
       {holdings.length > 0 ? (
-        <div className="bg-bg-card border border-border rounded-lg overflow-hidden">
+        <div className="bg-bg-card border border-border rounded-lg overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-bg-secondary">

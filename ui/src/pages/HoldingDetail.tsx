@@ -80,7 +80,7 @@ export default function HoldingDetail() {
         </button>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label="Shares Held" value={shares.toString()} />
         <StatCard
           label="Current Price"
@@ -197,7 +197,7 @@ export default function HoldingDetail() {
         </form>
       )}
 
-      <div className="bg-bg-card border border-border rounded-lg overflow-hidden">
+      <div className="bg-bg-card border border-border rounded-lg overflow-x-auto">
         <div className="px-4 py-3 border-b border-border">
           <h3 className="text-sm font-medium text-text-secondary">Trade History</h3>
         </div>

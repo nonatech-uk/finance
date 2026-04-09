@@ -166,7 +166,7 @@ export default function Transactions() {
   return (
     <div className="flex gap-0 h-[calc(100vh-3rem)]">
       {/* Main list */}
-      <div className={`flex-1 flex flex-col min-w-0 ${selectedId ? 'mr-[480px]' : ''}`}>
+      <div className={`flex-1 flex flex-col min-w-0 ${selectedId ? 'md:mr-[480px]' : ''}`}>
         <h2 className="text-xl font-semibold mb-4">Transactions</h2>
 
         {/* Filter bar */}
@@ -176,7 +176,7 @@ export default function Transactions() {
             placeholder="Search merchants, notes, amounts..."
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="bg-bg-card border border-border rounded-md px-3 py-1.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent w-56"
+            className="bg-bg-card border border-border rounded-md px-3 py-1.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent w-full sm:w-56"
           />
           <select
             value={account}
@@ -238,7 +238,7 @@ export default function Transactions() {
             placeholder="Tag filter (regex)"
             value={tagFilter}
             onChange={e => setTagFilter(e.target.value)}
-            className="bg-bg-card border border-border rounded-md px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent w-36 font-mono"
+            className="bg-bg-card border border-border rounded-md px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent w-full sm:w-36 font-mono"
           />
           <label className="inline-flex items-center gap-1.5 text-sm text-text-secondary cursor-pointer select-none">
             <input
@@ -323,7 +323,7 @@ export default function Transactions() {
 
       {/* Detail panel */}
       {selectedId && !selectMode && (
-        <div className="fixed right-0 top-0 h-full w-[480px] bg-bg-secondary border-l border-border overflow-auto p-5 z-10">
+        <div className="fixed inset-0 md:inset-auto md:right-0 md:top-0 md:h-full md:w-[480px] bg-bg-secondary border-l border-border overflow-auto p-5 z-10">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-lg font-semibold">Transaction Detail</h3>
             <button onClick={() => setSelectedId(null)} className="text-text-secondary hover:text-text-primary text-xl">&times;</button>

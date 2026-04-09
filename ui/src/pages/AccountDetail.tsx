@@ -345,7 +345,7 @@ export default function AccountDetail() {
         </h2>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label="Balance" value={`${data.summary.currency} ${Number(data.summary.balance).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`} />
         <StatCard label="Transactions" value={data.summary.transaction_count.toLocaleString()} />
         <StatCard label="Since" value={data.summary.earliest_date} />

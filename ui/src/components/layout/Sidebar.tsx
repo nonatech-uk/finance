@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom'
+import { Link, NavLink } from 'react-router-dom'
 import { useScope } from '../../contexts/ScopeContext'
 import AppSwitcher from './AppSwitcher'
 
@@ -23,7 +23,12 @@ const SCOPE_OPTIONS = [
   { value: 'all', label: 'All' },
 ]
 
-export default function Sidebar() {
+interface SidebarProps {
+  className?: string
+  onNavigate?: () => void
+}
+
+export default function Sidebar({ className, onNavigate }: SidebarProps) {
   const { scope, setScope, allowedScopes, user, isAdmin } = useScope()
 
   const visibleScopes = SCOPE_OPTIONS.filter(
@@ -32,11 +37,11 @@ export default function Sidebar() {
   const showSwitcher = visibleScopes.length > 1
 
   return (
-    <aside className="w-52 bg-bg-secondary border-r border-border flex flex-col shrink-0">
+    <aside className={`w-52 bg-bg-secondary border-r border-border flex flex-col shrink-0 ${className ?? ''}`}>
       <div className="p-4 border-b border-border">
         <div className="flex items-center justify-between">
-          <h1 className="text-lg font-bold text-accent">Finance</h1>
-          <AppSwitcher />
+          <Link to="/" className="text-lg font-bold text-accent hover:text-accent-hover transition-colors">Finance</Link>
+          <AppSwitcher currentApp="Finance" />
         </div>
         {showSwitcher && (
           <div className="flex gap-1 mt-2">
@@ -56,11 +61,12 @@ export default function Sidebar() {
           </div>
         )}
       </div>
-      <nav className="flex-1 p-2 space-y-1">
+      <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
         {NAV_ITEMS.map(({ to, label, icon }) => (
           <NavLink
             key={to}
             to={to}
+            onClick={onNavigate}
             className={({ isActive }) =>
               `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
                 isActive
@@ -78,6 +84,7 @@ export default function Sidebar() {
             <div className="border-t border-border my-2" />
             <NavLink
               to="/settings"
+              onClick={onNavigate}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
                   isActive

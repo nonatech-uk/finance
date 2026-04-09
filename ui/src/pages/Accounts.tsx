@@ -347,7 +347,7 @@ function CsvImportModal({
         {previewData && !importDone && (
           <div className="space-y-4">
             {/* Summary */}
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="bg-bg-hover rounded p-3 text-center">
                 <div className="text-lg font-semibold">{previewData.total_rows}</div>
                 <div className="text-xs text-text-secondary">Total rows</div>
@@ -551,7 +551,7 @@ export default function Accounts() {
       {Object.entries(grouped).map(([institution, accounts]) => (
         <div key={institution}>
           <h3 className="text-sm font-medium text-text-secondary uppercase tracking-wider mb-3">{institution}</h3>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {accounts.map(acct => (
               <div
                 key={`${acct.institution}-${acct.account_ref}`}

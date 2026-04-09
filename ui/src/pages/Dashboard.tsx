@@ -55,7 +55,7 @@ export default function Dashboard() {
       <h2 className="text-xl font-semibold">Dashboard</h2>
 
       {overview && (
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <StatCard label="Active Transactions" value={overview.active_transactions.toLocaleString()} subtitle={`${overview.total_raw_transactions.toLocaleString()} raw`} />
           <StatCard label="Accounts" value={overview.active_accounts} subtitle={`${overview.total_accounts} total`} />
           <StatCard label="Dedup Savings" value={overview.removed_by_dedup.toLocaleString()} subtitle={`${overview.dedup_groups} groups`} />
@@ -67,7 +67,7 @@ export default function Dashboard() {
       {favourites && favourites.items.length > 0 && (
         <div>
           <h3 className="text-sm font-medium text-text-secondary mb-3">Favourite Accounts</h3>
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {favourites.items.map(acct => (
               <Link
                 key={`${acct.institution}-${acct.account_ref}`}
@@ -94,7 +94,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Monthly Chart */}
         <div className="bg-bg-card border border-border rounded-lg p-5">
           <h3 className="text-sm font-medium text-text-secondary mb-4">Monthly Income / Expense (GBP)</h3>
