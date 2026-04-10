@@ -51,7 +51,10 @@ class Settings(BaseAppSettings):
     paypal_environment: str = "live"
 
     # Healthcheck UUIDs
+    hc_base: str = "https://hc.mees.st/ping"
     hc_paypal_sync: str = ""
+    hc_monzo_sync: str = ""
+    hc_wise_sync: str = ""
 
     # Anthropic (for LLM categorisation)
     anthropic_api_key: str = ""

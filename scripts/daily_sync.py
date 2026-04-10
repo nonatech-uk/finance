@@ -163,8 +163,8 @@ def run_categorisation():
 
 
 def main():
-    hc_monzo = os.environ.get("HEALTHCHECK_MONZO_URL")
-    hc_wise = os.environ.get("HEALTHCHECK_WISE_URL")
+    hc_monzo = f"{settings.hc_base}/{settings.hc_monzo_sync}" if settings.hc_monzo_sync else None
+    hc_wise = f"{settings.hc_base}/{settings.hc_wise_sync}" if settings.hc_wise_sync else None
 
     print(f"=== Daily Sync — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n")
 

@@ -43,8 +43,6 @@ podman run -d \
     -v "$SECRETS_DIR/tokens.json:/app/tokens.json:rw" \
     -e MONZO_TOKEN_FILE=/app/tokens.json \
     -e MONZO_REDIRECT_URI="https://finance.mees.st/oauth/callback" \
-    -e HEALTHCHECK_MONZO_URL="${HEALTHCHECK_MONZO_URL:-https://hc.mees.st/ping/865f397c-b6a4-4521-ba63-3b85598af72c}" \
-    -e HEALTHCHECK_WISE_URL="${HEALTHCHECK_WISE_URL:-https://hc.mees.st/ping/a32cd3ad-f032-4377-85d4-7e1fab04cf86}" \
     "$IMAGE"
 
 echo "Container started. Auth UI at https://finance.mees.st/"
