@@ -76,7 +76,7 @@ def _extract_from_image(client: anthropic.Anthropic, path: Path, mime_type: str)
     image_data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6-20250514",
         max_tokens=1024,
         messages=[{
             "role": "user",
@@ -111,7 +111,7 @@ def _extract_from_pdf(client: anthropic.Anthropic, path: Path) -> dict:
     try:
         # Try native PDF support first (Claude 3.5+ supports PDFs)
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6-20250514",
             max_tokens=1024,
             messages=[{
                 "role": "user",
@@ -152,7 +152,7 @@ def _extract_pdf_as_image(client: anthropic.Anthropic, path: Path) -> dict:
         image_data = base64.standard_b64encode(buf.getvalue()).decode("utf-8")
 
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6-20250514",
             max_tokens=1024,
             messages=[{
                 "role": "user",
@@ -182,7 +182,7 @@ def _extract_from_text(client: anthropic.Anthropic, path: Path) -> dict:
     text_content = path.read_text(encoding="utf-8", errors="replace")[:4000]
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6-20250514",
         max_tokens=1024,
         messages=[{
             "role": "user",
