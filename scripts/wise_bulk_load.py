@@ -69,7 +69,7 @@ def _is_positive_amount(amount_str: str) -> bool:
     return "<positive>" in amount_str
 
 
-def parse_activity(activity: dict) -> Optional[dict]:
+def parse_activity(activity: dict) -> Optional[List[dict]]:
     """Convert a Wise activity into a raw_transaction-shaped dict.
 
     Actual API activity structure:
@@ -247,7 +247,7 @@ def parse_activity(activity: dict) -> Optional[dict]:
     if not is_incoming and amount > 0:
         amount = -amount
 
-    return {
+    rows = [{
         "transaction_ref": activity_id,
         "account_ref": account_ref,
         "currency": currency,
@@ -258,16 +258,59 @@ def parse_activity(activity: dict) -> Optional[dict]:
         "raw_data": raw_data,
         "is_fx": is_fx,
         "fx_info": fx_info,
-    }
+    }]
+
+    # Cross-currency INTERBALANCE: emit the source-side debit too. Wise's
+    # activity feed only describes the target currency; without the source
+    # leg, the source-currency balance reads inflated. The FX event is
+    # already attached to the target row, so this row is balance-only.
+    if (activity_type == "INTERBALANCE"
+            and secondary_currency
+            and secondary_currency != currency
+            and secondary_amount):
+        source_amount = abs(secondary_amount)
+        if source_amount > 0:
+            source_account_ref = f"wise_{secondary_currency}"
+            rows[0]["raw_data"] = {
+                **raw_data,
+                "interbalance_role": "target",
+                "counter_account_ref": source_account_ref,
+                "counter_amount": str(-source_amount),
+            }
+            source_raw_data = {
+                **raw_data,
+                "interbalance_role": "source",
+                "counter_account_ref": account_ref,
+                "counter_amount": str(amount),
+            }
+            rows.append({
+                "transaction_ref": f"{activity_id}:source",
+                "account_ref": source_account_ref,
+                "currency": secondary_currency,
+                "amount": -source_amount,
+                "posted_at": posted_at,
+                "raw_merchant": raw_merchant,
+                "raw_memo": raw_memo,
+                "raw_data": source_raw_data,
+                "is_fx": False,
+                "fx_info": {},
+            })
+
+    return rows
 
 
 def write_transactions(txns: List[dict], conn) -> Dict[str, int]:
-    """Write parsed Wise activities to raw_transaction. Idempotent.
+    """Write parsed Wise activities to raw_transaction.
+
+    Insert new activities; for existing ones, refresh amount/merchant/memo/raw_data
+    when Wise reports a newer `updatedOn` (e.g. card pre-auth corrected to settled
+    amount). `posted_at` and `is_dirty` are preserved on update.
 
     Also attaches _raw_transaction_id to each txn for FX processing.
     """
     cur = conn.cursor()
     inserted = 0
+    updated = 0
 
     for txn in txns:
         cur.execute("""
@@ -282,8 +325,19 @@ def write_transactions(txns: List[dict], conn) -> Dict[str, int]:
             )
             ON CONFLICT (institution, account_ref, transaction_ref)
                 WHERE transaction_ref IS NOT NULL
-            DO NOTHING
-            RETURNING id
+            DO UPDATE SET
+                amount = EXCLUDED.amount,
+                raw_merchant = EXCLUDED.raw_merchant,
+                raw_memo = EXCLUDED.raw_memo,
+                raw_data = EXCLUDED.raw_data
+            WHERE
+                NOT (raw_transaction.raw_data ? 'csv_correction')
+                AND (
+                    (raw_transaction.raw_data->>'updated_on') IS NULL
+                    OR (raw_transaction.raw_data->>'updated_on')
+                       < (EXCLUDED.raw_data->>'updated_on')
+                )
+            RETURNING id, (xmax = 0) AS was_insert
         """, (
             txn["account_ref"],
             txn["transaction_ref"],
@@ -298,9 +352,13 @@ def write_transactions(txns: List[dict], conn) -> Dict[str, int]:
         result = cur.fetchone()
         if result:
             txn["_raw_transaction_id"] = result[0]
-            inserted += 1
+            if result[1]:
+                inserted += 1
+            else:
+                updated += 1
         else:
-            # Already exists — fetch ID for FX processing
+            # Conflict where DO UPDATE WHERE clause filtered it out (no change).
+            # Fetch ID for FX processing.
             cur.execute("""
                 SELECT id FROM raw_transaction
                 WHERE institution = 'wise' AND account_ref = %s AND transaction_ref = %s
@@ -310,8 +368,8 @@ def write_transactions(txns: List[dict], conn) -> Dict[str, int]:
                 txn["_raw_transaction_id"] = existing[0]
 
     conn.commit()
-    skipped = len(txns) - inserted
-    return {"inserted": inserted, "skipped": skipped}
+    skipped = len(txns) - inserted - updated
+    return {"inserted": inserted, "updated": updated, "skipped": skipped}
 
 
 def build_api_fx_events(txns: List[dict], conn) -> Dict[str, int]:
@@ -437,15 +495,18 @@ def main():
 
     for activity in activities:
         parsed = parse_activity(activity)
-        if parsed is None:
+        if not parsed:
             skipped_status += 1
             continue
 
-        if args.currency and parsed["currency"] != args.currency.upper():
-            skipped_currency += 1
-            continue
+        if args.currency:
+            wanted = args.currency.upper()
+            parsed = [r for r in parsed if r["currency"] == wanted]
+            if not parsed:
+                skipped_currency += 1
+                continue
 
-        txns.append(parsed)
+        txns.extend(parsed)
 
     print(f"  Parsed: {len(txns)} transactions")
     print(f"  Skipped: {skipped_status} (non-completed/unparseable), "
@@ -485,7 +546,9 @@ def main():
     conn = psycopg2.connect(settings.dsn)
     try:
         result = write_transactions(txns, conn)
-        print(f"  Written: {result['inserted']} new, {result['skipped']} duplicates.")
+        print(f"  Written: {result['inserted']} new, "
+              f"{result.get('updated', 0)} updated, "
+              f"{result['skipped']} unchanged.")
 
         # FX events
         if not args.no_fx and fx_txns:

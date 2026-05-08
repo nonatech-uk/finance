@@ -63,21 +63,65 @@ def sync_wise() -> dict:
     for activity in activities:
         parsed = parse_activity(activity)
         if parsed:
-            txns.append(parsed)
+            txns.extend(parsed)
 
     print(f"  Parsed {len(txns)} transactions")
 
-    if not txns:
-        return {"inserted": 0, "skipped": 0, "fx_events": 0}
-
     conn = psycopg2.connect(settings.dsn)
     try:
-        result = write_transactions(txns, conn)
-        fx_stats = build_api_fx_events(txns, conn)
-        result["fx_events"] = fx_stats["fx_events"]
+        if txns:
+            result = write_transactions(txns, conn)
+            fx_stats = build_api_fx_events(txns, conn)
+            result["fx_events"] = fx_stats["fx_events"]
+        else:
+            result = {"inserted": 0, "updated": 0, "skipped": 0, "fx_events": 0}
+
+        # Reconcile local sums against Wise's authoritative balance per currency.
+        # Discrepancies surface real ingestion gaps (e.g. cross-currency card
+        # payments where the activities API mis-attributes the funding currency,
+        # pre-auth amounts that haven't settled yet, missing INTERBALANCE legs).
+        result["balance_mismatches"] = reconcile_wise_balances(profile_id, conn)
         return result
     finally:
         conn.close()
+
+
+def reconcile_wise_balances(profile_id: int, conn, tolerance: float = 0.01) -> list[dict]:
+    """Compare live Wise balances to local SUM(amount) per currency. Print
+    mismatches and return them. Does not raise — caller decides how to react.
+    """
+    from src.ingestion.wise import get_balances
+    from decimal import Decimal
+
+    live = {b["currency"]: Decimal(str(b["amount"]["value"]))
+            for b in get_balances(profile_id)}
+
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT currency, COALESCE(SUM(amount), 0)
+        FROM active_transaction
+        WHERE institution = 'wise'
+        GROUP BY currency
+    """)
+    local = {row[0]: Decimal(row[1]) for row in cur.fetchall()}
+
+    mismatches = []
+    for cur_code in sorted(set(live) | set(local)):
+        l = live.get(cur_code, Decimal("0"))
+        local_sum = local.get(cur_code, Decimal("0"))
+        gap = local_sum - l
+        if abs(gap) > Decimal(str(tolerance)):
+            mismatches.append({"currency": cur_code, "live": float(l),
+                               "local": float(local_sum), "gap": float(gap)})
+
+    if mismatches:
+        print("  ⚠ Balance mismatches vs live Wise:")
+        for m in mismatches:
+            print(f"    {m['currency']}: live={m['live']:.2f}, "
+                  f"local={m['local']:.2f}, gap={m['gap']:+.2f}")
+    else:
+        print("  ✓ All Wise balances match live.")
+    return mismatches
 
 
 def sync_monzo() -> dict:
@@ -173,8 +217,12 @@ def main():
     print("Step 1: Sync Wise...")
     try:
         result = sync_wise()
-        print(f"  Result: {result['inserted']} new, {result['skipped']} dupes, "
-              f"{result.get('fx_events', 0)} FX events")
+        mismatches = result.get("balance_mismatches", [])
+        print(f"  Result: {result['inserted']} new, "
+              f"{result.get('updated', 0)} updated, "
+              f"{result['skipped']} dupes, "
+              f"{result.get('fx_events', 0)} FX events, "
+              f"{len(mismatches)} balance mismatch(es)")
         wise_ok = True
     except Exception as e:
         print(f"  ERROR syncing Wise: {e}")
